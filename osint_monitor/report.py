@@ -1,13 +1,13 @@
-"""Render the daily intelligence brief as a single self-contained HTML file."""
+"""Render the brief as a tile dashboard: each tile opens its full view in a pop-up."""
 from __future__ import annotations
 
 import html
 import json
 from datetime import datetime, timedelta
 
-from .fetcher import NewsItem
 from . import charts
 from .config import DISPLAY_TZ, REFRESH_URL, REPO
+from .fetcher import NewsItem
 
 try:
     from zoneinfo import ZoneInfo
@@ -20,49 +20,151 @@ except Exception:  # tzdata missing on some Windows installs
 def local(dt: datetime) -> datetime:
     return dt.astimezone(_TZ)
 
+
 SEV_LABEL = {5: "Critical", 4: "High", 3: "Elevated", 2: "Moderate", 1: "Low", 0: "Info"}
 SEV_COLOR = {5: "#b3261e", 4: "#d9531e", 3: "#c98a00", 2: "#4a7bb7", 1: "#6b7a8f", 0: "#9aa4b2"}
 
+# Line icons (24px, stroke = currentColor)
+ICONS = {
+    "pulse": '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+    "list": '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
+    "pin": '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+    "eye": '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    "target": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+    "grid": '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    "swap": '<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>',
+    "hook": '<path d="M12 3v10a4 4 0 1 1-4-4"/><path d="M12 3l3 3"/>',
+    "close": '<path d="M6 6l12 12M18 6L6 18"/>',
+    "refresh": '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+}
+
+
+def icon(name: str, size: int = 22) -> str:
+    return (f'<svg class="ic" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{ICONS[name]}</svg>')
+
+
 CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--muted:#5d6b7c;--line:#e3e7ec;--accent:#1f3a5f}
-*{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-header{background:var(--accent);color:#fff;padding:22px 32px}
-header h1{margin:0;font-size:22px}header p{margin:4px 0 0;opacity:.85;font-size:13px}
-.banner{background:#fff4e5;border-bottom:1px solid #f0d9b5;padding:8px 32px;font-size:13px;color:#7a4b00}
-main{max-width:1100px;margin:0 auto;padding:24px 32px 60px}
-h2{font-size:17px;margin:32px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line)}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-.kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
-.kpi b{display:block;font-size:26px}.kpi span{color:var(--muted);font-size:13px}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
-th{background:#eef1f5;font-weight:600;font-size:13px;color:var(--muted)}
-td.num{text-align:right;font-variant-numeric:tabular-nums}
-.up{color:#b3261e;font-weight:600}.down{color:#2e7d32}
-.spike{display:inline-block;background:#b3261e;color:#fff;border-radius:4px;padding:0 6px;font-size:11px;margin-left:6px}
-.new{display:inline-block;background:#1f3a5f;color:#fff;border-radius:4px;padding:0 6px;font-size:11px;margin-left:6px}
-.item{background:var(--card);border:1px solid var(--line);border-left:5px solid;border-radius:8px;padding:12px 16px;margin-bottom:10px}
-.item h3{margin:0 0 4px;font-size:15px}.item h3 a{color:var(--ink);text-decoration:none}.item h3 a:hover{text-decoration:underline}
-.meta{color:var(--muted);font-size:12.5px}.tag{display:inline-block;background:#eef1f5;border-radius:4px;padding:0 6px;margin:2px 4px 0 0;font-size:12px}
-.sev{font-weight:600}.summary{margin:6px 0 0;font-size:14px}
-.also{font-size:12.5px;color:var(--muted);margin-top:4px}
-footer{color:var(--muted);font-size:12px;text-align:center;padding:20px}
-.filters{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 0 10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+:root{--navy:#13233f;--navy2:#1d3358;--brass:#b8913a;--brass-soft:#f3ead3;--page:#edf0f4;--tile:#fff;
+--ink:#1b2433;--ink2:#55606f;--line:#d9dee5;--soft:#f5f7fa;
+--display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;--body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 var(--body);background:var(--page);color:var(--ink)}
+a{color:inherit}
+button{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+
+/* header: the duty board */
+.board{background:var(--navy);color:#fff;padding:22px 32px 26px}
+.board-in{max-width:1240px;margin:0 auto}
+.top{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.emblem{width:46px;height:46px;border-radius:50%;border:2px solid var(--brass);display:grid;place-items:center;color:var(--brass);flex:none}
+.title h1{font:600 30px/1.05 var(--display);margin:0;letter-spacing:.2px}
+.title p{margin:2px 0 0;color:#b9c3d3;font-size:14px}
+.actions{margin-left:auto;text-align:right}
+.refresh{display:inline-flex;align-items:center;gap:8px;background:var(--brass);color:var(--navy);border:0;border-radius:8px;
+ padding:9px 16px;font-weight:600;cursor:pointer}
+.refresh:hover{background:#c9a24a}.refresh:disabled{opacity:.75;cursor:progress}
+#rstatus{font-size:13px;color:#b9c3d3;margin-top:6px;max-width:380px;margin-left:auto}
+.counters{display:grid;grid-template-columns:repeat(4,1fr);margin-top:22px;border-top:1px solid #2c4369}
+.counter{padding:14px 18px 0 0}
+.counter+.counter{padding-left:18px;border-left:1px solid #2c4369}
+.counter b{display:block;font:600 44px/1 var(--display);font-variant-numeric:tabular-nums}
+.counter span{color:#b9c3d3;font-size:14px}
+.counter.alert b{color:#ffb4a8}
+.banner{background:#fff4e5;color:#7a4b00;font-size:14px;padding:8px 32px;text-align:center}
+
+/* tile grid */
+main{max-width:1240px;margin:0 auto;padding:26px 32px 50px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:minmax(170px,auto);gap:16px}
+.tile{position:relative;background:var(--tile);border:1px solid var(--line);border-radius:12px;padding:18px 20px 16px;
+ text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:10px;min-width:0;transition:border-color .15s,box-shadow .15s}
+.tile:hover{border-color:var(--brass);box-shadow:0 6px 22px rgba(19,35,63,.10)}
+.tile .hd{display:flex;align-items:center;gap:10px}
+.tile .hd .ic{color:var(--brass);flex:none}
+.tile h2{font:600 22px/1.1 var(--display);margin:0}
+.tile .more{margin-left:auto;font-size:13px;color:var(--ink2);white-space:nowrap}
+.tile .lead{font:600 34px/1 var(--display);font-variant-numeric:tabular-nums}
+.tile .lead small{font:400 15px var(--body);color:var(--ink2);margin-left:6px}
+.tile p{margin:0;color:var(--ink2);font-size:14.5px}
+.t-trends{grid-column:span 2;grid-row:span 2;background:var(--navy2);color:#fff;border-color:var(--navy2)}
+.t-trends p,.t-trends .more{color:#c4cede}.t-trends .lead small{color:#c4cede}
+.t-trends:hover{border-color:var(--brass)}
+.t-trends .chartwrap{background:#fcfcfb;border-radius:8px;padding:10px 10px 4px}
+.t-trends .flat{color:#dfe6f1}.t-trends .up{color:#ffb4a8}.t-trends .down{color:#9be29b}
+.catstrip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:auto;padding-top:6px}
+.catstrip div{border-top:2px solid var(--brass);padding-top:6px;font-size:13.5px;color:#c4cede}
+.catstrip b{display:block;font:600 24px/1.1 var(--display);color:#fff}
+.t-incidents{grid-row:span 2}
+.heads{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.heads li{display:grid;grid-template-columns:10px 1fr;gap:10px;font-size:14.5px;line-height:1.35}
+.heads i{width:10px;height:10px;border-radius:50%;margin-top:5px}
+.heads span{display:block;color:var(--ink2);font-size:13px;margin-top:2px}
+.bars{display:flex;flex-direction:column;gap:7px;font-size:14px}
+.bars div{display:grid;grid-template-columns:1fr 40px;column-gap:8px;row-gap:3px;align-items:center}
+.bars em{grid-column:1/-1}
+.bars em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.bars s{display:block;height:8px;border-radius:4px;background:var(--line);text-decoration:none;overflow:hidden}
+.bars s b{display:block;height:100%;background:#2a78d6;border-radius:4px}
+.bars code{font:inherit;font-variant-numeric:tabular-nums;text-align:right;color:var(--ink2)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip-s{background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:13.5px}
+.chip-s.hot{border-color:var(--brass);background:var(--brass-soft)}
+.pill{display:inline-block;font-size:12.5px;border-radius:999px;padding:1px 10px;background:#2c4369;color:#dfe6f1}
+.empty-t{color:var(--ink2);font-size:14px}
+
+/* pop-up */
+dialog{border:0;padding:0;border-radius:16px;width:min(1080px,94vw);max-height:90vh;background:var(--page);color:var(--ink);
+ box-shadow:0 30px 80px rgba(10,20,40,.35)}
+dialog::backdrop{background:rgba(13,24,43,.55);backdrop-filter:blur(3px)}
+dialog[open]{animation:pop .18s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.dlg-hd{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:12px;background:var(--navy);color:#fff;padding:14px 18px 14px 22px}
+.dlg-hd .ic{color:var(--brass)}
+.dlg-hd h2{font:600 26px/1.1 var(--display);margin:0}
+.dlg-hd p{margin:0;color:#b9c3d3;font-size:13.5px}
+.x{margin-left:auto;width:40px;height:40px;border-radius:50%;border:1px solid #3a5480;background:transparent;color:#fff;
+ display:grid;place-items:center;cursor:pointer;flex:none}
+.x:hover{background:#2c4369}
+.dlg-bd{padding:20px 22px 26px;overflow:auto;max-height:calc(90vh - 70px)}
+.dlg-bd h3{font:600 20px/1.2 var(--display);margin:22px 0 10px}
+.dlg-bd h3:first-child{margin-top:0}
+@media (prefers-reduced-motion:reduce){dialog[open]{animation:none}.tile{transition:none}}
+
+/* tables & incidents (inside pop-ups) */
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid #e8ecf1;font-size:14.5px;vertical-align:top}
+th{background:var(--soft);font-weight:600;font-size:13.5px;color:var(--ink2)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.meta{color:var(--ink2);font-size:13.5px}
+.spike{display:inline-block;background:#b3261e;color:#fff;border-radius:4px;padding:0 6px;font-size:12px;margin-left:6px}
+.new{display:inline-block;background:var(--navy);color:#fff;border-radius:4px;padding:0 6px;font-size:12px;margin-left:6px}
+.item{background:#fff;border:1px solid var(--line);border-left:5px solid;border-radius:10px;padding:12px 16px;margin-bottom:10px}
+.item h4{margin:0 0 4px;font-size:16px;line-height:1.35}.item h4 a{text-decoration:none}.item h4 a:hover{text-decoration:underline}
+.item .meta span+span::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:#9aa4b2;margin:0 8px 2px}
+.sev{font-weight:600}.summary{margin:6px 0 0;font-size:14.5px}
+.tag{display:inline-block;background:var(--soft);border:1px solid #e3e7ec;border-radius:4px;padding:0 6px;margin:4px 4px 0 0;font-size:12.5px}
+.also{font-size:13px;color:var(--ink2);margin-top:4px}
+.filters{position:sticky;top:0;z-index:5;background:var(--page);padding:4px 0 12px;margin-bottom:6px;border-bottom:1px solid var(--line)}
 .frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.filters select,.filters input{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #cfd6de;border-radius:6px;background:#fff;color:var(--ink)}
-.filters input{flex:1;min-width:160px}
-.chip{font:inherit;font-size:13px;border:1px solid #cfd6de;background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer;color:var(--ink)}
-.chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-.shown{color:var(--muted);font-size:13px;margin-left:auto}
-.hdr{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;flex-wrap:wrap}
-.refresh{font:inherit;font-size:14px;font-weight:600;background:#fff;color:var(--accent);border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
-.refresh:disabled{opacity:.7;cursor:progress}
-#rstatus{font-size:12.5px;margin-top:6px;opacity:.9;max-width:420px;text-align:right}
-.hidden{display:none!important}"""
-CSS += charts.CSS
-CSS += """
-@media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}main,header{padding-left:16px;padding-right:16px}}
+.filters select,.filters input{font:inherit;font-size:14.5px;padding:7px 9px;border:1px solid #c9d1db;border-radius:8px;background:#fff;color:var(--ink)}
+.filters input{flex:1;min-width:170px}
+.chip{border:1px solid #c9d1db;background:#fff;border-radius:999px;padding:5px 14px;cursor:pointer;font-size:14px}
+.chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.shown{color:var(--ink2);font-size:14px;margin-left:auto}
+.hidden{display:none!important}
+footer{color:var(--ink2);font-size:13px;text-align:center;padding:8px 20px 30px}
+
+@media(max-width:1000px){.tiles{grid-template-columns:repeat(2,1fr)}.t-trends{grid-column:span 2;grid-row:span 1}}
+@media(max-width:640px){
+ .board{padding:18px 16px 20px}main{padding:18px 16px 40px}
+ .tiles{grid-template-columns:1fr}.t-trends,.t-incidents{grid-column:auto;grid-row:auto}
+ .counters{grid-template-columns:repeat(2,1fr)}.counter:nth-child(3){border-left:0;padding-left:0}
+ .counter b{font-size:36px}.actions{margin-left:0;text-align:left;width:100%}#rstatus{margin-left:0}
+ dialog{width:100vw;max-width:100vw;max-height:100dvh;height:100dvh;border-radius:0}.dlg-bd{max-height:calc(100dvh - 70px)}
+}
 """
+CSS += charts.CSS
 
 
 def _pct(t) -> str:
@@ -77,36 +179,81 @@ def e(s) -> str:
     return html.escape(str(s), quote=True)
 
 
+def _name(key) -> str:
+    return key if isinstance(key, str) else " in ".join(key)
+
+
+def _arrow(p) -> str:
+    if p["direction"] == "up":
+        return f'<span class="up">▲ rising ({p["trend"]:.1f}x)</span>'
+    if p["direction"] == "down":
+        return f'<span class="down">▼ easing ({p["trend"]:.1f}x)</span>'
+    return '<span class="flat">● steady</span>'
+
+
+def _outlook_table(rows, label, empty) -> str:
+    if not rows:
+        return f'<p class="meta">{empty}</p>'
+    body = "".join(
+        f"<tr><td>{e(_name(r['key']))}</td><td class=num>{r['last7']}</td>"
+        f"<td class=num>~{r['expected']:.1f} <span class=meta>({r['low']}–{r['high']})</span></td>"
+        f"<td><span class=ptrack><b style=\"width:{r['p_any'] * 100:.0f}%\"></b></span>{r['p_any'] * 100:.0f}%</td>"
+        f"<td>{_arrow(r)}</td></tr>" for r in rows)
+    return (f"<table><tr><th>{label}</th><th class=num>Last 7 days</th><th class=num>Expected next 7 (range)</th>"
+            f"<th>Chance of at least one</th><th>Trend</th></tr>{body}</table>")
+
+
+def _bars(rows, value, label=lambda r: r["key"], fmt=lambda v: f"{v:.0f}") -> str:
+    if not rows:
+        return ""
+    top = max(value(r) for r in rows) or 1
+    return '<div class="bars">' + "".join(
+        f'<div><em>{e(_name(label(r)))}</em><s><b style="width:{value(r) / top * 100:.0f}%"></b></s>'
+        f'<code>{fmt(value(r))}</code></div>' for r in rows) + "</div>"
+
+
 def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
     color = SEV_COLOR[lead.severity]
     tags = "".join(f'<span class="tag">{e(c)}</span>' for c in lead.categories)
-    where = ", ".join(lead.areas + [d for d in lead.districts]) or lead.state
+    where = ", ".join(lead.areas + lead.districts) or lead.state
     summary = lead.llm_summary or lead.summary[:260]
     also = ""
     if dupes:
         srcs = sorted({d.source for d in dupes if d.source != lead.source})
         if srcs:
-            also = f'<div class="also">Also reported by: {e(", ".join(srcs[:6]))}</div>'
+            also = f'<div class="also">Also reported by {e(", ".join(srcs[:6]))}</div>'
     search = " ".join([lead.title, summary, where] + lead.categories).lower()
-    return f"""<div class="item" style="border-left-color:{color}"
+    return f"""<article class="item" style="border-left-color:{color}"
  data-ts="{int(lead.published.timestamp())}" data-sev="{lead.severity}"
  data-state="{e(lead.state)}" data-districts="{e('|'.join(lead.districts))}"
- data-areas="{e('|'.join(lead.areas))}" data-cats="{e('|'.join(lead.categories))}"
- data-q="{e(search)}">
-<h3><a href="{e(lead.link)}" target="_blank" rel="noopener">{e(lead.title)}</a></h3>
-<div class="meta"><span class="sev" style="color:{color}">{SEV_LABEL[lead.severity]}</span>
- · {e(where)} · {e(lead.source)} · {local(lead.published):%d %b %H:%M} IST</div>
+ data-areas="{e('|'.join(lead.areas))}" data-cats="{e('|'.join(lead.categories))}" data-q="{e(search)}">
+<h4><a href="{e(lead.link)}" target="_blank" rel="noopener">{e(lead.title)}</a></h4>
+<div class="meta"><span class="sev" style="color:{color}">{SEV_LABEL[lead.severity]}</span><span>{e(where)}</span>
+<span>{e(lead.source)}</span><span>{local(lead.published):%d %b, %H:%M} IST</span></div>
 <div>{tags}</div>
 {f'<p class="summary">{e(summary)}</p>' if summary else ''}{also}
-</div>"""
+</article>"""
+
+
+def _dialog(key, ic, title, sub, body) -> str:
+    return f"""<dialog id="d-{key}" aria-labelledby="h-{key}">
+<div class="dlg-hd">{icon(ic, 26)}<div><h2 id="h-{key}">{title}</h2><p>{sub}</p></div>
+<button class="x" data-close aria-label="Close">{icon("close", 20)}</button></div>
+<div class="dlg-bd">{body}</div></dialog>"""
+
+
+def _tile(key, ic, title, body, cls="", more="") -> str:
+    return (f'<div class="tile {cls}" role="button" tabindex="0" data-open="{key}" aria-haspopup="dialog" aria-label="{e(title)}: {e(more or 'open')}">'
+            f'<div class="hd">{icon(ic)}<h2>{title}</h2>{f'<span class="more">{more}</span>' if more else ''}</div>{body}</div>')
 
 
 _JS = r"""
 const CFG = __CFG__;
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const cards = $$('#list .item');
+let cards = $$('#list .item');
 const F = {win: $('#f-win'), state: $('#f-state'), district: $('#f-district'), area: $('#f-area'),
            cat: $('#f-cat'), sev: $('#f-sev'), q: $('#f-q')};
+let openTile = '';
 
 function uniq(attr) {
   const c = {};
@@ -123,15 +270,18 @@ fill(F.area, 'areas', 'All Vizag areas'); fill(F.cat, 'cats', 'All categories');
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   for (const [k, el] of Object.entries(F)) if (p.has(k)) el.value = p.get(k);
+  return p.get('tile') || '';
 }
 function writeHash() {
   const p = new URLSearchParams();
-  for (const [k, el] of Object.entries(F)) if (el.value && !(k === 'sev' && el.value === '0') && !(k === 'win' && el.value === String(CFG.defaultWin))) p.set(k, el.value);
-  history.replaceState(null, '', p.toString() ? '#' + p : location.pathname);
+  if (openTile) p.set('tile', openTile);
+  if (openTile === 'incidents')
+    for (const [k, el] of Object.entries(F)) if (el.value && !(k === 'sev' && el.value === '0') && !(k === 'win' && el.value === String(CFG.defaultWin))) p.set(k, el.value);
+  history.replaceState(null, '', p.toString() ? '#' + p : location.pathname + location.search);
 }
 function apply() {
   const now = Date.now() / 1000, win = +F.win.value * 3600, q = F.q.value.trim().toLowerCase();
-  let shown = 0, high = 0;
+  let shown = 0;
   cards.forEach(el => {
     const d = el.dataset;
     const ok = (now - +d.ts <= win)
@@ -142,9 +292,8 @@ function apply() {
       && (+d.sev >= +F.sev.value)
       && (!q || d.q.includes(q));
     el.classList.toggle('hidden', !ok);
-    if (ok) { shown++; if (+d.sev >= 4) high++; }
+    if (ok) shown++;
   });
-  $('#k-inc').textContent = shown; $('#k-high').textContent = high;
   $('#shown').textContent = `${shown} of ${cards.length} incidents`;
   $('#empty').classList.toggle('hidden', shown > 0);
   $('#chip-vizag').classList.toggle('on', F.district.value === 'Visakhapatnam');
@@ -155,8 +304,38 @@ Object.values(F).forEach(el => el.addEventListener(el.tagName === 'INPUT' ? 'inp
 F.area.addEventListener('change', () => { if (F.area.value) F.district.value = 'Visakhapatnam'; apply(); });
 $('#chip-vizag').onclick = () => { F.district.value = F.district.value === 'Visakhapatnam' ? '' : 'Visakhapatnam'; if (!F.district.value) F.area.value = ''; apply(); };
 $('#chip-all').onclick = () => { ['state', 'district', 'area', 'cat', 'q'].forEach(k => F[k].value = ''); F.sev.value = '0'; apply(); };
-readHash(); apply();
 
+// ---- tiles & pop-ups ------------------------------------------------------
+let opener = null;
+function openDialog(key, preset) {
+  const d = $('#d-' + key); if (!d) return;
+  if (preset) {
+    ['state', 'district', 'area', 'cat', 'q'].forEach(k => F[k].value = ''); F.sev.value = '0'; F.win.value = String(CFG.defaultWin);
+    Object.entries(preset).forEach(([k, v]) => F[k].value = v);
+    apply();
+  }
+  $$('dialog[open]').forEach(x => x.close());
+  openTile = key; d.showModal(); d.querySelector('.dlg-bd').scrollTop = 0;
+  document.body.style.overflow = 'hidden'; writeHash();
+}
+$$('[data-open]').forEach(t => {
+  const go = () => { opener = t; openDialog(t.dataset.open, t.dataset.preset ? JSON.parse(t.dataset.preset) : (t.dataset.open === 'incidents' ? {} : null)); };
+  t.addEventListener('click', go);
+  t.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+});
+$$('dialog').forEach(d => {
+  d.addEventListener('close', () => { document.body.style.overflow = ''; openTile = ''; writeHash(); if (opener) opener.focus(); });
+  d.addEventListener('click', ev => { if (ev.target === d) d.close(); });   // click outside the box
+  d.querySelector('[data-close]').addEventListener('click', () => d.close());
+});
+const start = readHash(); apply();
+if (start) openDialog(start, null);
+addEventListener('hashchange', () => { const t = readHash(); apply(); if (t && t !== openTile) openDialog(t, null); });
+
+"""
+
+
+_REFRESH_JS = r"""
 // ---- refresh -------------------------------------------------------------
 const btn = $('#refresh'), st = $('#rstatus');
 async function latest() {
@@ -169,18 +348,18 @@ function poll(maxMin) {
   const until = Date.now() + maxMin * 60000;
   polling = setInterval(async () => {
     if (await latest() > CFG.generatedAt) { st.textContent = 'New news arrived. Reloading…'; location.reload(); }
-    else if (Date.now() > until) { clearInterval(polling); btn.disabled = false; btn.textContent = '↻ Refresh now';
+    else if (Date.now() > until) { clearInterval(polling); btn.disabled = false; btn.lastElementChild.textContent = 'Refresh now';
       st.textContent = 'Still running on GitHub. This page will update on its next check.'; }
   }, 15000);
 }
 btn.onclick = async () => {
-  btn.disabled = true; btn.textContent = 'Refreshing…';
+  btn.disabled = true; btn.lastElementChild.textContent = 'Refreshing…';
   if (CFG.refreshUrl) {
     try {
       const r = await fetch(CFG.refreshUrl, {method: 'POST'});
       const j = await r.json();
       st.textContent = j.message || 'Fetching the latest news (about 2–3 minutes)…';
-    } catch (e) { st.textContent = 'Could not reach the refresh service. Try again in a minute.'; btn.disabled = false; btn.textContent = '↻ Refresh now'; return; }
+    } catch (e) { st.textContent = 'Could not reach the refresh service. Try again in a minute.'; btn.disabled = false; btn.lastElementChild.textContent = 'Refresh now'; return; }
   } else {
     window.open(CFG.actionsUrl, '_blank', 'noopener');
     st.textContent = 'On the GitHub page that opened, click "Run workflow". This page reloads by itself when the new news is ready (about 2–3 minutes).';
@@ -192,78 +371,6 @@ setInterval(async () => { if (!polling && await latest() > CFG.generatedAt) loca
 """
 
 
-def _arrow(p) -> str:
-    if p["direction"] == "up":
-        return f'<span class="up">▲ rising ({p["trend"]:.1f}x)</span>'
-    if p["direction"] == "down":
-        return f'<span class="down">▼ easing ({p["trend"]:.1f}x)</span>'
-    return '<span class="flat">● steady</span>'
-
-
-def _outlook_table(rows, label, empty) -> str:
-    if not rows:
-        return f'<p class="meta">{empty}</p>'
-    body = "".join(
-        f"<tr><td>{e(r['key'] if isinstance(r['key'], str) else ' in '.join(r['key']))}</td>"
-        f"<td class=num>{r['last7']}</td>"
-        f"<td class=num>~{r['expected']:.1f} <span class=meta>({r['low']}–{r['high']})</span></td>"
-        f"<td><span class=ptrack><b style=\"width:{r['p_any'] * 100:.0f}%\"></b></span>{r['p_any'] * 100:.0f}%</td>"
-        f"<td>{_arrow(r)}</td></tr>" for r in rows)
-    return (f"<table><tr><th>{label}</th><th class=num>Last 7 days</th><th class=num>Expected next 7 (range)</th>"
-            f"<th>Chance of ≥1</th><th>Trend</th></tr>{body}</table>")
-
-
-def _outlook_section(o) -> str:
-    if o is None:
-        return ""
-    hist = o.daily_total()
-    fc = o.forecast_days()
-    main = charts.daily_chart(hist, fc)
-    total = o.project(o.total)
-    data_rows = "".join(f"<tr><td>{d:%a %d %b}</td><td class=num>{c}</td><td>{'incomplete' if p else ''}</td></tr>"
-                        for d, c, p in hist) + "".join(
-        f"<tr><td>{d:%a %d %b}</td><td class=num>~{ex:.1f} ({lo}–{hi})</td><td>outlook</td></tr>" for d, ex, lo, hi in fc)
-
-    recent = [h for h in hist if h[0] >= o.today - __import__("datetime").timedelta(days=13)]
-    small = []
-    for r in o.category_rows(top=8):
-        cat = r["key"]
-        svg = charts.daily_chart([(d, o.by_cat[cat].get(d, 0), p) for d, _, p in recent],
-                                 o.forecast_days(o.by_cat[cat]), width=240, height=90, compact=True)
-        small.append(f'<div class="viz"><h3>{e(cat)}</h3><div class="num">{r["last7"]} last 7 days · '
-                     f'next 7: ~{r["expected"]:.1f} · {_arrow(r)}</div>{svg}</div>')
-
-    conf_text = {"Low": "only a few days of monitoring so far, so treat the outlook as a rough guide",
-                 "Medium": "a couple of weeks of history; rates are usable, trends still settling",
-                 "High": "3+ weeks of history"}[o.conf]
-    return f"""
-<h2>Trends &amp; 7-day outlook</h2>
-<p class="note">Outlook confidence: <span class="conf">{o.conf}</span>: {conf_text}
-({o.n_reliable} reliable day{'s' if o.n_reliable != 1 else ''}; Medium from 7, High from 21).
-The outlook estimates how many <b>news-reported</b> incidents to expect, from recent daily rates and their trend.
-It is a planning aid for where attention may be needed, not a prediction of specific crimes.</p>
-
-<div class="viz"><h3>Crime &amp; security incidents per day: AP &amp; Telangana</h3>
-<p class="sub">Last 30 days and next 7 days · next week expected ~{total['expected']:.0f} incidents
-(likely {total['low']}–{total['high']}) · {_arrow(total)}</p>
-{charts.LEGEND}<div class="scroll">{main}</div>
-<details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details>
-</div>
-
-<h3 style="font-size:15px;margin:18px 0 8px">By category: last 14 days and next 7</h3>
-<div class="sm">{''.join(small) or '<p class="meta">Not enough data yet.</p>'}</div>
-
-<h3 style="font-size:15px;margin:22px 0 8px">Watchlist: most likely next week (category × district)</h3>
-{_outlook_table(o.watchlist(), "Category in district", "Not enough district-level history yet.")}
-
-<h3 style="font-size:15px;margin:22px 0 8px">District outlook</h3>
-{_outlook_table(o.district_rows(), "District / Commissionerate", "Not enough district-level history yet.")}
-
-<h3 style="font-size:15px;margin:22px 0 8px">Vizag areas outlook</h3>
-{_outlook_table(o.area_rows(), "Vizag area", "No Vizag area-level incidents in the last 30 days yet.")}
-"""
-
-
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
            emerging, now: datetime, hours: int, demo: bool, outlook=None) -> str:
     week_start = now - timedelta(days=7)
@@ -271,97 +378,181 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
                  if cl[0].categories and cl[0].published >= week_start]
     incidents.sort(key=lambda cl: (-cl[0].severity, -len(cl), -cl[0].published.timestamp()))
     incidents = incidents[:500]
+    day = [cl for cl in incidents if cl[0].published >= now - timedelta(hours=24)]
+    vizag = [cl for cl in incidents if "Visakhapatnam" in cl[0].districts]
 
-    recent_start = now - timedelta(hours=24)
-    n_articles = sum(1 for i in items if i.published >= recent_start)
-    n_spikes = sum(1 for t in trends if t["spike"])
+    n_articles = sum(1 for i in items if i.published >= now - timedelta(hours=24))
+    n_high = sum(1 for cl in day if cl[0].severity >= 4)
+    total = outlook.project(outlook.total) if outlook else None
 
-    trend_rows = "".join(
-        f"<tr><td>{e(t['category'])}{'<span class=spike>SPIKE</span>' if t['spike'] else ''}</td>"
-        f"<td>{e(t['state'])}</td><td class=num>{t['current']}</td><td class=num>{t['previous']}</td>"
-        f"<td class='num {'up' if t['change'] > 0 else 'down' if t['change'] < 0 else ''}'>"
-        f"{_pct(t)}</td></tr>"
-        for t in trends[:15]) or "<tr><td colspan=5>Not enough history yet.</td></tr>"
-
-    hot_rows = "".join(
-        f"<tr><td>{e(h['district'])}</td><td class=num>{h['total']}</td>"
-        f"<td>{e(', '.join(f'{c} ({n})' for c, n in h['by_category']))}</td></tr>"
-        for h in hotspots) or "<tr><td colspan=3>No district-tagged incidents.</td></tr>"
-
-    emerging_html = "".join(
-        f'<span class="tag">{e(t["term"])} · {t["count"]}{"<span class=new>NEW</span>" if t["new"] else ""}</span>'
-        for t in emerging) or '<span class="meta">None detected this week.</span>'
-
-    cards = "".join(_item_card(cl[0], cl[1:]) for cl in incidents)
-
-    banner = ('<div class="banner"><b>DEMO MODE</b>: headlines below are synthetic sample data, '
-              'not real incidents.</div>') if demo else ""
-
+    # ---------------- pop-up bodies ----------------
     win_opts = "".join(f'<option value="{h}"{" selected" if h == hours else ""}>{lbl}</option>'
                        for h, lbl in ((6, "Last 6 hours"), (24, "Last 24 hours"),
                                       (72, "Last 3 days"), (168, "Last 7 days")))
     if hours not in (6, 24, 72, 168):
         win_opts += f'<option value="{hours}" selected>Last {hours} hours</option>'
     sev_opts = "".join(f'<option value="{v}">{lbl}</option>' for v, lbl in
-                       ((0, "Any severity"), (3, "Elevated +"), (4, "High +"), (5, "Critical only")))
+                       ((0, "Any severity"), (3, "Elevated and above"), (4, "High and above"), (5, "Critical only")))
+    incidents_body = f"""<div class="filters">
+<div class="frow" style="margin-bottom:8px"><button class="chip" id="chip-all">All</button>
+<button class="chip" id="chip-vizag">Vizag only</button>
+<select id="f-win" aria-label="Time window">{win_opts}</select>
+<select id="f-sev" aria-label="Severity">{sev_opts}</select><span class="shown" id="shown"></span></div>
+<div class="frow"><select id="f-state" aria-label="State"></select><select id="f-district" aria-label="District"></select>
+<select id="f-area" aria-label="Vizag area"></select><select id="f-cat" aria-label="Category"></select>
+<input id="f-q" type="search" placeholder="Search, e.g. ganja or digital arrest" aria-label="Search"></div></div>
+<div id="list">{"".join(_item_card(cl[0], cl[1:]) for cl in incidents)}</div>
+<p class="meta hidden" id="empty">No incidents match these filters. Try a longer time window.</p>"""
 
+    trend_rows = "".join(
+        f"<tr><td>{e(t['category'])}{'<span class=spike>Spike</span>' if t['spike'] else ''}</td>"
+        f"<td>{e(t['state'])}</td><td class=num>{t['current']}</td><td class=num>{t['previous']}</td>"
+        f"<td class='num {'up' if t['change'] > 0 else 'down' if t['change'] < 0 else ''}'>{_pct(t)}</td></tr>"
+        for t in trends[:20]) or "<tr><td colspan=5>Not enough history yet.</td></tr>"
+    weekly_body = (f"<table><tr><th>Category</th><th>State</th><th class=num>This week</th><th class=num>Last week</th>"
+                   f"<th class=num>Change</th></tr>{trend_rows}</table>")
+
+    hot_rows = "".join(
+        f"<tr><td>{e(h['district'])}</td><td class=num>{h['total']}</td>"
+        f"<td>{e(', '.join(f'{c} ({n})' for c, n in h['by_category']))}</td></tr>"
+        for h in hotspots) or "<tr><td colspan=3>No district-tagged incidents yet.</td></tr>"
+    districts_body = (f"<h3>Most incidents in the last 7 days</h3><table><tr><th>District / Commissionerate</th>"
+                      f"<th class=num>Incidents</th><th>Top categories</th></tr>{hot_rows}</table>")
+
+    scams_body = ("<p class='meta' style='margin-top:0'>Scam and crime techniques mentioned in the news this week. "
+                  "<b>New</b> means not seen in the previous week.</p><div class='chips'>" + "".join(
+        f'<span class="chip-s{" hot" if t["new"] else ""}">{e(t["term"])}: {t["count"]}{" (new)" if t["new"] else ""}</span>'
+        for t in emerging) + "</div>") if emerging else "<p class='meta'>No known techniques mentioned this week.</p>"
+
+    trends_body = watch_body = areas_body = ""
+    if outlook:
+        hist, fc = outlook.daily_total(), outlook.forecast_days()
+        conf_text = {"Low": "Only a few days of monitoring so far, so treat the outlook as a rough guide.",
+                     "Medium": "A couple of weeks of history. Rates are usable; trends are still settling.",
+                     "High": "Three or more weeks of history."}[outlook.conf]
+        data_rows = "".join(f"<tr><td>{d:%a %d %b}</td><td class=num>{c}</td><td>{'incomplete' if p else ''}</td></tr>"
+                            for d, c, p in hist) + "".join(
+            f"<tr><td>{d:%a %d %b}</td><td class=num>~{ex:.1f} ({lo}–{hi})</td><td>outlook</td></tr>" for d, ex, lo, hi in fc)
+        recent = [h for h in hist if h[0] >= outlook.today - timedelta(days=13)]
+        small = "".join(
+            f'<div class="viz"><h3>{e(r["key"])}</h3><div class="num">{r["last7"]} in last 7 days, '
+            f'~{r["expected"]:.1f} expected next 7 · {_arrow(r)}</div>'
+            + charts.daily_chart([(d, outlook.by_cat[r["key"]].get(d, 0), p) for d, _, p in recent],
+                                 outlook.forecast_days(outlook.by_cat[r["key"]]), width=240, height=90, compact=True)
+            + "</div>" for r in outlook.category_rows(top=8))
+        trends_body = f"""<p class="note" style="margin-top:0">Outlook confidence <span class="conf">{outlook.conf}</span>
+{conf_text} Based on {outlook.n_reliable} reliable day{'s' if outlook.n_reliable != 1 else ''}; Medium from 7, High from 21.
+The outlook estimates how many <b>news-reported</b> incidents to expect. It is a planning aid, not a prediction of specific crimes.</p>
+<div class="viz"><h3>Incidents per day, AP and Telangana</h3>
+<p class="sub">Last 30 days and the next 7. Next week: about {total['expected']:.0f} incidents (likely {total['low']}–{total['high']}), {_arrow(total)}</p>
+{charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
+<details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
+<h3>By category, last 14 days and next 7</h3><div class="sm">{small or '<p class="meta">Not enough data yet.</p>'}</div>"""
+        watch_body = ("<p class='meta' style='margin-top:0'>Crime type and district combinations most likely to appear in the news next week.</p>"
+                      + _outlook_table(outlook.watchlist(top=12), "Category in district", "Not enough district-level history yet.")
+                      + "<h3>District outlook</h3>"
+                      + _outlook_table(outlook.district_rows(top=15), "District / Commissionerate", "Not enough history yet."))
+        areas_body = _outlook_table(outlook.area_rows(top=20), "Vizag area",
+                                    "No Vizag area-level incidents in the last 30 days yet. Area names are picked up when a story mentions them, e.g. Gajuwaka or MVP Colony.")
+
+    # ---------------- tiles ----------------
+    if outlook:
+        mini_hist = [h for h in outlook.daily_total() if h[0] >= outlook.today - timedelta(days=20)]
+        t_trends = _tile("trends", "pulse", "Trends and outlook", f"""
+<div class="lead">~{total['expected']:.0f}<small>incidents expected next 7 days (likely {total['low']}–{total['high']})</small></div>
+<p>{_arrow(total)} &nbsp;<span class="pill">Confidence: {outlook.conf}</span></p>
+<div class="chartwrap">{charts.daily_chart(mini_hist, outlook.forecast_days(), width=560, height=290)}</div>
+<div class="catstrip">{"".join(f'<div><b>~{r["expected"]:.0f}</b>{e(r["key"])} next week</div>' for r in outlook.category_rows(top=3))}</div>""",
+                         "t-trends", "Open charts")
+        wl = outlook.watchlist(top=4)
+        t_watch = _tile("watch", "target", "Watchlist",
+                        _bars(wl, lambda r: r["p_any"] * 100, fmt=lambda v: f"{v:.0f}%") + "<p>Chance of at least one incident next week</p>"
+                        if wl else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
+        ar = outlook.area_rows(top=4)
+        t_areas = _tile("areas", "grid", "Vizag areas",
+                        _bars(ar, lambda r: r["last7"] or r["expected"], fmt=lambda v: f"{v:.0f}") + "<p>Incidents in the last 7 days</p>"
+                        if ar else '<p class="empty-t">No area-level Vizag incidents yet this month.</p>')
+    else:
+        t_trends = t_watch = t_areas = ""
+
+    heads = "".join(
+        f'<li><i style="background:{SEV_COLOR[cl[0].severity]}"></i><div>{e(cl[0].title[:110])}'
+        f'<span>{e(", ".join(cl[0].areas + cl[0].districts) or cl[0].state)}, {local(cl[0].published):%H:%M}</span></div></li>'
+        for cl in day[:5])
+    t_inc = _tile("incidents", "list", "Live incidents",
+                  f'<div class="lead">{len(day)}<small>in the last 24 hours</small></div>'
+                  + (f'<ul class="heads">{heads}</ul>' if heads else '<p class="empty-t">No incidents in the last 24 hours.</p>'),
+                  "t-incidents", "See all")
+
+    vz_areas = {}
+    for cl in vizag:
+        for a in cl[0].areas:
+            vz_areas[a] = vz_areas.get(a, 0) + 1
+    vz_top = ", ".join(a for a, _ in sorted(vz_areas.items(), key=lambda kv: -kv[1])[:3])
+    vz_latest = max(vizag, key=lambda cl: cl[0].published)[0].title[:90] if vizag else ""
+    t_vizag = (f'<div class="tile" role="button" tabindex="0" aria-label="Vizag watch: open" data-open="incidents" data-preset=\'{{"district":"Visakhapatnam","win":"168"}}\' aria-haspopup="dialog">'
+               f'<div class="hd">{icon("pin")}<h2>Vizag watch</h2></div>'
+               f'<div class="lead">{len(vizag)}<small>incidents in 7 days</small></div>'
+               + (f"<p>Latest: {e(vz_latest)}</p>" if vz_latest else "<p>No Vizag incidents this week.</p>")
+               + (f"<p>Areas: {e(vz_top)}</p>" if vz_top else "") + "</div>")
+
+    t_dist = _tile("districts", "eye", "District hotspots",
+                   _bars(hotspots[:4], lambda h: h["total"], label=lambda h: h["district"]) + "<p>Incidents in the last 7 days</p>"
+                   if hotspots else '<p class="empty-t">No district-tagged incidents yet.</p>')
+    ups = sum(1 for t in trends if t.get("spike"))
+    building = trends and trends[0].get("baseline") is False
+    t_week = _tile("weekly", "swap", "Weekly changes",
+                   ('<div class="lead">Building<small>baseline</small></div><p>Week-on-week changes and spike alerts start after 14 days of monitoring.</p>'
+                    if building else f'<div class="lead">{ups}<small>spike{"s" if ups != 1 else ""} this week</small></div>'
+                    '<p>This week against last week, by category and state</p>'))
+    t_scams = _tile("scams", "hook", "Scam techniques",
+                    ('<div class="chips">' + "".join(f'<span class="chip-s{" hot" if t["new"] else ""}">{e(t["term"])}</span>'
+                                                     for t in emerging[:7]) + "</div><p>Mentioned in this week's news</p>")
+                    if emerging else '<p class="empty-t">None mentioned this week.</p>')
+
+    dialogs = "".join([
+        _dialog("incidents", "list", "Incidents", "Deduplicated, highest severity first. Filters are saved in the page link.", incidents_body),
+        _dialog("trends", "pulse", "Trends and 7-day outlook", "Incidents per day and what to expect next week", trends_body) if outlook else "",
+        _dialog("watch", "target", "Watchlist", "Where incidents are most likely next week", watch_body) if outlook else "",
+        _dialog("areas", "grid", "Vizag areas outlook", "Locality-level incidents and next-week outlook", areas_body) if outlook else "",
+        _dialog("districts", "eye", "District hotspots", "Last 7 days", districts_body),
+        _dialog("weekly", "swap", "Weekly changes", "This week against last week", weekly_body),
+        _dialog("scams", "hook", "Scam techniques", "Modus operandi in this week's news", scams_body),
+    ])
+
+    banner = ('<div class="banner"><b>Demo mode.</b> The headlines below are made-up sample data, not real incidents.</div>'
+              if demo else "")
     cfg = json.dumps({
         "refreshUrl": REFRESH_URL,
         "actionsUrl": f"https://github.com/{REPO}/actions/workflows/hourly.yml",
         "generatedAt": int(now.timestamp()),
         "defaultWin": hours,
     })
+    spike_n = sum(1 for t in trends if t["spike"])
 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Open-Source Crime &amp; Threat Brief, {local(now):%d %b %Y}</title><style>{CSS}</style></head><body>
-<header><div class="hdr"><div><h1>Open-Source Crime &amp; Threat Brief</h1>
-<p>Andhra Pradesh &amp; Telangana · last updated {local(now):%d %b %Y, %H:%M} IST · updates hourly</p></div>
-<div style="text-align:right"><button class="refresh" id="refresh">↻ Refresh now</button><div id="rstatus"></div></div></div></header>
+<title>Crime and threat board, {local(now):%d %b %Y}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>{CSS}</style></head><body>
+<header class="board"><div class="board-in">
+<div class="top"><div class="emblem">{icon("eye", 24)}</div>
+<div class="title"><h1>Crime and threat board</h1><p>Andhra Pradesh and Telangana, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.</p></div>
+<div class="actions"><button class="refresh" id="refresh">{icon("refresh", 18)}<span>Refresh now</span></button><div id="rstatus"></div></div></div>
+<div class="counters">
+<div class="counter"><b>{n_articles}</b><span>news articles scanned today</span></div>
+<div class="counter"><b>{len(day)}</b><span>incidents in 24 hours</span></div>
+<div class="counter{' alert' if n_high else ''}"><b>{n_high}</b><span>high or critical</span></div>
+<div class="counter"><b>{len(vizag)}</b><span>in Vizag this week</span></div>
+</div></div></header>
 {banner}
-<main>
-<div class="kpis">
-<div class="kpi"><b>{n_articles}</b><span>articles scanned (24h)</span></div>
-<div class="kpi"><b id="k-inc">0</b><span>incidents shown</span></div>
-<div class="kpi"><b id="k-high">0</b><span>high / critical shown</span></div>
-<div class="kpi"><b>{n_spikes}</b><span>category spikes (7d)</span></div>
-</div>
-
-{_outlook_section(outlook)}
-
-<h2>Incidents</h2>
-<div class="filters">
-<div class="frow" style="margin-bottom:8px">
-<button class="chip" id="chip-all">All</button>
-<button class="chip" id="chip-vizag">Vizag only</button>
-<select id="f-win" aria-label="Time window">{win_opts}</select>
-<select id="f-sev" aria-label="Severity">{sev_opts}</select>
-<span class="shown" id="shown"></span>
-</div>
-<div class="frow">
-<select id="f-state" aria-label="State"></select>
-<select id="f-district" aria-label="District"></select>
-<select id="f-area" aria-label="Vizag area"></select>
-<select id="f-cat" aria-label="Category"></select>
-<input id="f-q" type="search" placeholder="Search (e.g. ganja, digital arrest)" aria-label="Search">
-</div>
-</div>
-<div id="list">{cards}</div>
-<p class="meta hidden" id="empty">No incidents match these filters. Try a longer time window.</p>
-
-<h2>Trends: last 7 days vs previous 7</h2>
-<table><tr><th>Category</th><th>State</th><th class=num>This week</th><th class=num>Last week</th><th class=num>Change</th></tr>
-{trend_rows}</table>
-
-<h2>District hotspots: last 7 days</h2>
-<table><tr><th>District / Commissionerate</th><th class=num>Incidents</th><th>Top categories</th></tr>
-{hot_rows}</table>
-
-<h2>Modus operandi watch</h2>
-<div>{emerging_html}</div>
-</main>
-<footer>Updates every hour · <a href="incidents.json">incidents.json</a><br>Compiled automatically from public news sources. Unverified: corroborate before acting.
-Severity is a keyword-based estimate, not an assessment.</footer>
-<script>{_JS.replace("__CFG__", cfg)}</script>
+<main><div class="tiles">
+{t_trends}{t_inc}{t_vizag}{t_watch}{t_dist}{t_areas}{t_week}{t_scams}
+</div></main>
+{dialogs}
+<footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate.
+{f'{spike_n} category spike{"s" if spike_n != 1 else ""} this week. ' if spike_n else ''}Data: <a href="incidents.json">incidents.json</a>, <a href="outlook.json">outlook.json</a></footer>
+<script>{_JS.replace("__CFG__", cfg)}{_REFRESH_JS}</script>
 <script>{charts.TIP_JS}</script>
 </body></html>"""

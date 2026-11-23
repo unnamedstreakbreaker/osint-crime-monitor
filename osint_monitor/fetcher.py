@@ -51,6 +51,13 @@ def clean(text: str | None) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+def strip_source(title: str, source: str) -> str:
+    """Google News appends ' - Outlet' to titles; drop it (also a cut-off ' -' tail)."""
+    if source and title.endswith(" - " + source):
+        title = title[: -len(source) - 3]
+    return title.rstrip(" -–")
+
+
 def _parse_date(value: str | None) -> datetime:
     if value:
         try:
@@ -92,7 +99,7 @@ def parse_feed(xml_bytes: bytes, feed_name: str) -> list[NewsItem]:
         if not source and " - " in title:
             title, source = title.rsplit(" - ", 1)
         items.append(NewsItem(
-            title=title,
+            title=strip_source(title, source),
             link=fields.get("link", ""),
             summary=clean(fields.get("description") or fields.get("summary") or fields.get("content")),
             published=_parse_date(fields.get("pubDate") or fields.get("published") or fields.get("updated")),

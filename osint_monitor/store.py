@@ -5,7 +5,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from .fetcher import NewsItem
+from .fetcher import NewsItem, strip_source
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -75,7 +75,7 @@ class Store:
             (start.isoformat(),)).fetchall()
         out = []
         for r in rows:
-            it = NewsItem(title=r[1], link=r[2], summary=r[3],
+            it = NewsItem(title=strip_source(r[1], r[5] or ""), link=r[2], summary=r[3],
                           published=datetime.fromisoformat(r[4]), source=r[5],
                           feed=r[6], item_id=r[0])
             it.categories = json.loads(r[7] or "[]")
