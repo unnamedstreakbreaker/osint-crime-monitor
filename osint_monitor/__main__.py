@@ -33,6 +33,8 @@ def main(argv=None) -> int:
 
     now = datetime.now(timezone.utc)
     db_path = args.db or (":memory:" if args.demo else config.DB_PATH)
+    if db_path != ":memory:":
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     store = Store(db_path)
 
     print("Collecting items…")
@@ -65,8 +67,6 @@ def main(argv=None) -> int:
 
     page = report.render(items=items, clusters=clusters, trends=trends, hotspots=hotspots,
                          emerging=emerging, now=now, hours=args.hours, demo=args.demo)
-    if args.db is None and not args.demo:
-        os.makedirs(os.path.dirname(config.DB_PATH) or ".", exist_ok=True)
     os.makedirs(config.REPORT_DIR, exist_ok=True)
     out = args.out or os.path.join(config.REPORT_DIR,
                                    f"brief_{now:%Y%m%d}{'_demo' if args.demo else ''}.html")
