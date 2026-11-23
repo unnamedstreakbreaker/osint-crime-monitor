@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from . import analysis, config, report
 from .classifier import classify, enrich_with_llm
 from .demo import sample_items
+from .forecast import Outlook
 from .fetcher import fetch_all
 from .store import Store
 
@@ -65,8 +66,20 @@ def main(argv=None) -> int:
     hotspots = analysis.district_hotspots(items, now)
     emerging = analysis.emerging_terms(items, now)
 
+    tz = report._TZ
+    started = store.tracking_start() or now
+    if args.demo:  # pretend monitoring has run for 10 days so the demo shows a full outlook
+        started = now - timedelta(days=10)
+    outlook = Outlook(clusters, started.astimezone(tz).date(), now.astimezone(tz).date(), tz)
+
+    baseline_ok = (now - started) >= timedelta(days=14)
+    if not baseline_ok:  # last week wasn't monitored yet, so "spikes" would be artefacts
+        for t in trends:
+            t["spike"] = False
+            t["baseline"] = False
+
     page = report.render(items=items, clusters=clusters, trends=trends, hotspots=hotspots,
-                         emerging=emerging, now=now, hours=args.hours, demo=args.demo)
+                         emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook)
     os.makedirs(config.REPORT_DIR, exist_ok=True)
     out = args.out or os.path.join(config.REPORT_DIR,
                                    f"brief_{now:%Y%m%d}{'_demo' if args.demo else ''}.html")
@@ -74,6 +87,18 @@ def main(argv=None) -> int:
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(page)
     print(f"Brief written to {out}")
+    def _rows(rows):
+        return [{"name": r["key"] if isinstance(r["key"], str) else " in ".join(r["key"]),
+                 "last_7_days": r["last7"], "expected_next_7": round(r["expected"], 2),
+                 "range": [r["low"], r["high"]], "chance_any": round(r["p_any"], 3),
+                 "trend": round(r["trend"], 2)} for r in rows]
+    with open(os.path.join(os.path.dirname(out) or ".", "outlook.json"), "w", encoding="utf-8") as fh:
+        json.dump({"generated_at": now.isoformat(), "confidence": outlook.conf,
+                   "reliable_days": outlook.n_reliable,
+                   "total": _rows([{"key": "All incidents", **outlook.project(outlook.total)}])[0],
+                   "categories": _rows(outlook.category_rows()), "districts": _rows(outlook.district_rows()),
+                   "vizag_areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist())},
+                  fh, indent=2, ensure_ascii=False)
     with open(os.path.join(os.path.dirname(out) or ".", "status.json"), "w") as fh:
         json.dump({"generated_at": int(now.timestamp()), "items": len(items)}, fh)
 
@@ -92,7 +117,7 @@ def main(argv=None) -> int:
             } for cl in recent], fh, indent=2, ensure_ascii=False)
         print(f"JSON written to {jpath}")
 
-    spikes = [t for t in trends if t["spike"]]
+    spikes = [t for t in trends if t["spike"]]  # empty until 14 days of monitoring
     if spikes:
         print("Spikes:", "; ".join(f"{t['category']} ({t['state']}) {t['previous']}→{t['current']}" for t in spikes))
     return 0

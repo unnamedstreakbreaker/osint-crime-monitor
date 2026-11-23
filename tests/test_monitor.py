@@ -111,3 +111,43 @@ class AnalysisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForecastTests(unittest.TestCase):
+    def _clusters(self, per_day, cat_title, days, now):
+        items = []
+        for d in range(days):
+            for k in range(per_day(d)):
+                items.append(classify(item(f"{cat_title} case {d}-{k} reported", d * 24 + 3, now=now)))
+        return {i.item_id: [i] for i in items}
+
+    def test_steady_rate_forecast(self):
+        from datetime import timezone as tz
+        from osint_monitor.forecast import Outlook
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        cl = self._clusters(lambda d: 3, "Hyderabad cyber fraud", 30, now)
+        o = Outlook(cl, (now - timedelta(days=25)).date(), now.date(), tz.utc)
+        p = o.project(o.total)
+        self.assertAlmostEqual(p["expected"], 21, delta=1.5)   # 3/day x 7
+        self.assertLessEqual(p["low"], 21); self.assertGreaterEqual(p["high"], 21)
+        self.assertEqual(o.conf, "High")
+
+    def test_rising_trend_detected(self):
+        from datetime import timezone as tz
+        from osint_monitor.forecast import Outlook
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        cl = self._clusters(lambda d: 4 if d < 7 else 1, "Vizag ganja seized", 30, now)
+        o = Outlook(cl, (now - timedelta(days=25)).date(), now.date(), tz.utc)
+        self.assertEqual(o.project(o.total)["direction"], "up")
+
+    def test_single_story_not_overconfident(self):
+        from datetime import timezone as tz
+        from osint_monitor.forecast import Outlook
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        cl = self._clusters(lambda d: 5, "Hyderabad cyber fraud", 30, now)
+        one = classify(item("Murder in Kurnool over land dispute", 30, now=now))
+        cl[one.item_id] = [one]
+        o = Outlook(cl, now.date(), now.date(), tz.utc)      # monitoring started today
+        kurnool = next(r for r in o.district_rows(top=20) if r["key"] == "Kurnool")
+        self.assertLess(kurnool["p_any"], 0.9)
+        self.assertEqual(o.conf, "Low")

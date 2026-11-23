@@ -61,6 +61,11 @@ class Store:
         self.conn.commit()
         return new
 
+    def tracking_start(self):
+        """UTC datetime of the first run that stored anything (None if empty)."""
+        row = self.conn.execute("SELECT MIN(first_seen) FROM items").fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
     def known_ids(self) -> set[str]:
         return {r[0] for r in self.conn.execute("SELECT item_id FROM items")}
 

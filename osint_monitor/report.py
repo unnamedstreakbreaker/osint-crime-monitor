@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 from .fetcher import NewsItem
+from . import charts
 from .config import DISPLAY_TZ, REFRESH_URL, REPO
 
 try:
@@ -57,12 +58,16 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:20px}
 .refresh{font:inherit;font-size:14px;font-weight:600;background:#fff;color:var(--accent);border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
 .refresh:disabled{opacity:.7;cursor:progress}
 #rstatus{font-size:12.5px;margin-top:6px;opacity:.9;max-width:420px;text-align:right}
-.hidden{display:none!important}
+.hidden{display:none!important}"""
+CSS += charts.CSS
+CSS += """
 @media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}main,header{padding-left:16px;padding-right:16px}}
 """
 
 
 def _pct(t) -> str:
+    if t.get("baseline") is False:
+        return '<span class="meta">building baseline</span>'
     if t['previous'] == 0:
         return 'new' if t['current'] else '—'
     return f"{'+' if t['change'] > 0 else ''}{t['change'] * 100:.0f}%"
@@ -187,8 +192,80 @@ setInterval(async () => { if (!polling && await latest() > CFG.generatedAt) loca
 """
 
 
+def _arrow(p) -> str:
+    if p["direction"] == "up":
+        return f'<span class="up">▲ rising ({p["trend"]:.1f}x)</span>'
+    if p["direction"] == "down":
+        return f'<span class="down">▼ easing ({p["trend"]:.1f}x)</span>'
+    return '<span class="flat">● steady</span>'
+
+
+def _outlook_table(rows, label, empty) -> str:
+    if not rows:
+        return f'<p class="meta">{empty}</p>'
+    body = "".join(
+        f"<tr><td>{e(r['key'] if isinstance(r['key'], str) else ' in '.join(r['key']))}</td>"
+        f"<td class=num>{r['last7']}</td>"
+        f"<td class=num>~{r['expected']:.1f} <span class=meta>({r['low']}–{r['high']})</span></td>"
+        f"<td><span class=ptrack><b style=\"width:{r['p_any'] * 100:.0f}%\"></b></span>{r['p_any'] * 100:.0f}%</td>"
+        f"<td>{_arrow(r)}</td></tr>" for r in rows)
+    return (f"<table><tr><th>{label}</th><th class=num>Last 7 days</th><th class=num>Expected next 7 (range)</th>"
+            f"<th>Chance of ≥1</th><th>Trend</th></tr>{body}</table>")
+
+
+def _outlook_section(o) -> str:
+    if o is None:
+        return ""
+    hist = o.daily_total()
+    fc = o.forecast_days()
+    main = charts.daily_chart(hist, fc)
+    total = o.project(o.total)
+    data_rows = "".join(f"<tr><td>{d:%a %d %b}</td><td class=num>{c}</td><td>{'incomplete' if p else ''}</td></tr>"
+                        for d, c, p in hist) + "".join(
+        f"<tr><td>{d:%a %d %b}</td><td class=num>~{ex:.1f} ({lo}–{hi})</td><td>outlook</td></tr>" for d, ex, lo, hi in fc)
+
+    recent = [h for h in hist if h[0] >= o.today - __import__("datetime").timedelta(days=13)]
+    small = []
+    for r in o.category_rows(top=8):
+        cat = r["key"]
+        svg = charts.daily_chart([(d, o.by_cat[cat].get(d, 0), p) for d, _, p in recent],
+                                 o.forecast_days(o.by_cat[cat]), width=240, height=90, compact=True)
+        small.append(f'<div class="viz"><h3>{e(cat)}</h3><div class="num">{r["last7"]} last 7 days · '
+                     f'next 7: ~{r["expected"]:.1f} · {_arrow(r)}</div>{svg}</div>')
+
+    conf_text = {"Low": "only a few days of monitoring so far, so treat the outlook as a rough guide",
+                 "Medium": "a couple of weeks of history; rates are usable, trends still settling",
+                 "High": "3+ weeks of history"}[o.conf]
+    return f"""
+<h2>Trends &amp; 7-day outlook</h2>
+<p class="note">Outlook confidence: <span class="conf">{o.conf}</span>: {conf_text}
+({o.n_reliable} reliable day{'s' if o.n_reliable != 1 else ''}; Medium from 7, High from 21).
+The outlook estimates how many <b>news-reported</b> incidents to expect, from recent daily rates and their trend.
+It is a planning aid for where attention may be needed, not a prediction of specific crimes.</p>
+
+<div class="viz"><h3>Crime &amp; security incidents per day: AP &amp; Telangana</h3>
+<p class="sub">Last 30 days and next 7 days · next week expected ~{total['expected']:.0f} incidents
+(likely {total['low']}–{total['high']}) · {_arrow(total)}</p>
+{charts.LEGEND}<div class="scroll">{main}</div>
+<details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details>
+</div>
+
+<h3 style="font-size:15px;margin:18px 0 8px">By category: last 14 days and next 7</h3>
+<div class="sm">{''.join(small) or '<p class="meta">Not enough data yet.</p>'}</div>
+
+<h3 style="font-size:15px;margin:22px 0 8px">Watchlist: most likely next week (category × district)</h3>
+{_outlook_table(o.watchlist(), "Category in district", "Not enough district-level history yet.")}
+
+<h3 style="font-size:15px;margin:22px 0 8px">District outlook</h3>
+{_outlook_table(o.district_rows(), "District / Commissionerate", "Not enough district-level history yet.")}
+
+<h3 style="font-size:15px;margin:22px 0 8px">Vizag areas outlook</h3>
+{_outlook_table(o.area_rows(), "Vizag area", "No Vizag area-level incidents in the last 30 days yet.")}
+"""
+
+
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
-           emerging, now: datetime, hours: int, demo: bool) -> str:
+           emerging, now: datetime, hours: int, demo: bool, outlook=None) -> str:
     week_start = now - timedelta(days=7)
     incidents = [cl for cl in clusters.values()
                  if cl[0].categories and cl[0].published >= week_start]
@@ -250,6 +327,8 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
 <div class="kpi"><b>{n_spikes}</b><span>category spikes (7d)</span></div>
 </div>
 
+{_outlook_section(outlook)}
+
 <h2>Incidents</h2>
 <div class="filters">
 <div class="frow" style="margin-bottom:8px">
@@ -284,4 +363,5 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
 <footer>Updates every hour · <a href="incidents.json">incidents.json</a><br>Compiled automatically from public news sources. Unverified: corroborate before acting.
 Severity is a keyword-based estimate, not an assessment.</footer>
 <script>{_JS.replace("__CFG__", cfg)}</script>
+<script>{charts.TIP_JS}</script>
 </body></html>"""

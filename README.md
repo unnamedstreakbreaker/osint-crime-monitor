@@ -40,6 +40,21 @@ The page then reloads by itself when the new brief is ready (about 2–3 minutes
   The token never appears in the web page. The Worker only starts this one workflow, and it won't
   start a run while one is already going or within 5 minutes of the last one.
 
+## Trends & 7-day outlook
+
+The page shows incidents per day (last 30 days) with a **7-day outlook**: overall, per category,
+a **watchlist** of the most likely category × district combinations, per district, and per Vizag area.
+Each outlook row gives last-7-days count, expected next-7-days count with a likely range (80%),
+the chance of at least one incident, and whether it's rising or easing. Also published as
+`outlook.json`.
+
+How it works (`osint_monitor/forecast.py`): recent daily rate (recent days weigh more), blended with
+each group's long-run share of incidents so that one story doesn't look like a certainty, times a
+trend factor once there are 10+ days of history. Confidence shows **Low** until 7 days of monitoring,
+**Medium** to 21, then **High**. Days before monitoring began are greyed out because the feeds only
+show part of them. The outlook covers *news-reported incidents*. It is a planning aid, not a
+prediction of specific crimes.
+
 ## Quick start
 
 ```bash
