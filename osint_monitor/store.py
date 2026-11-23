@@ -1,0 +1,77 @@
+"""SQLite storage so trends can be computed across days of runs."""
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+
+from .fetcher import NewsItem
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS items (
+    item_id      TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    link         TEXT,
+    summary      TEXT,
+    published    TEXT NOT NULL,
+    source       TEXT,
+    feed         TEXT,
+    categories   TEXT,
+    state        TEXT,
+    districts    TEXT,
+    severity     INTEGER,
+    matched      TEXT,
+    llm_summary  TEXT,
+    cluster_id   TEXT,
+    first_seen   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
+"""
+
+
+class Store:
+    def __init__(self, path: str):
+        self.conn = sqlite3.connect(path)
+        self.conn.executescript(SCHEMA)
+
+    def upsert(self, items: list[NewsItem]) -> int:
+        """Insert new items; returns how many were new."""
+        now = datetime.now(timezone.utc).isoformat()
+        existing = self.known_ids()
+        new = sum(1 for it in items if it.item_id not in existing)
+        for it in items:
+            self.conn.execute(
+                """INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(item_id) DO UPDATE SET
+                     categories=excluded.categories, state=excluded.state,
+                     districts=excluded.districts, severity=excluded.severity,
+                     matched=excluded.matched, cluster_id=excluded.cluster_id,
+                     llm_summary=COALESCE(NULLIF(excluded.llm_summary,''), items.llm_summary)""",
+                (it.item_id, it.title, it.link, it.summary, it.published.isoformat(),
+                 it.source, it.feed, json.dumps(it.categories), it.state,
+                 json.dumps(it.districts), it.severity, json.dumps(it.matched_terms),
+                 it.llm_summary, it.cluster_id, now))
+        self.conn.commit()
+        return new
+
+    def known_ids(self) -> set[str]:
+        return {r[0] for r in self.conn.execute("SELECT item_id FROM items")}
+
+    def since(self, start: datetime) -> list[NewsItem]:
+        rows = self.conn.execute(
+            "SELECT * FROM items WHERE published >= ? ORDER BY published DESC",
+            (start.isoformat(),)).fetchall()
+        out = []
+        for r in rows:
+            it = NewsItem(title=r[1], link=r[2], summary=r[3],
+                          published=datetime.fromisoformat(r[4]), source=r[5],
+                          feed=r[6], item_id=r[0])
+            it.categories = json.loads(r[7] or "[]")
+            it.state = r[8] or ""
+            it.districts = json.loads(r[9] or "[]")
+            it.severity = r[10] or 0
+            it.matched_terms = json.loads(r[11] or "[]")
+            it.llm_summary = r[12] or ""
+            it.cluster_id = r[13] or ""
+            out.append(it)
+        return out
