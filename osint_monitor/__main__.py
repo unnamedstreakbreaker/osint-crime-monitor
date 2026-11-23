@@ -74,6 +74,8 @@ def main(argv=None) -> int:
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(page)
     print(f"Brief written to {out}")
+    with open(os.path.join(os.path.dirname(out) or ".", "status.json"), "w") as fh:
+        json.dump({"generated_at": int(now.timestamp()), "items": len(items)}, fh)
 
     if args.json or args.json_out:
         jpath = args.json_out or out.rsplit(".", 1)[0] + ".json"
@@ -84,6 +86,7 @@ def main(argv=None) -> int:
             json.dump([{
                 "title": cl[0].title, "link": cl[0].link, "published": cl[0].published.isoformat(),
                 "categories": cl[0].categories, "state": cl[0].state, "districts": cl[0].districts,
+                "areas": cl[0].areas,
                 "severity": cl[0].severity, "summary": cl[0].llm_summary or cl[0].summary,
                 "sources": sorted({c.source for c in cl}),
             } for cl in recent], fh, indent=2, ensure_ascii=False)

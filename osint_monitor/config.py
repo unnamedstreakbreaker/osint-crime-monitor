@@ -9,6 +9,11 @@ DB_PATH = os.environ.get("OSINT_DB", "osint_monitor.db")
 REPORT_DIR = os.environ.get("OSINT_REPORT_DIR", "reports")
 DISPLAY_TZ = os.environ.get("OSINT_TZ", "Asia/Kolkata")
 
+# Manual "Refresh now" button: URL of the refresh endpoint (Cloudflare Worker,
+# see refresh-worker/). Empty = button opens the GitHub Actions page instead.
+REFRESH_URL = os.environ.get("OSINT_REFRESH_URL", "")
+REPO = os.environ.get("GITHUB_REPOSITORY", "unnamedstreakbreaker/osint-crime-monitor")
+
 # Optional LLM enrichment (summaries + better classification).
 # Without a key the monitor runs fully rule-based.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -31,6 +36,9 @@ FEEDS = {
     "gnews_ap_ganja": _gnews("Andhra Pradesh ganja seized"),
     "gnews_maoist": _gnews("Maoist Telangana OR Andhra Pradesh"),
     "gnews_digital_arrest": _gnews("digital arrest scam"),
+    "gnews_vizag_police": _gnews("Visakhapatnam police"),
+    "gnews_vizag_crime": _gnews("Vizag crime OR cyber OR ganja"),
+    "thehindu_vizag": "https://www.thehindu.com/news/cities/Visakhapatnam/feeder/default.rss",
     "thehindu_ap": "https://www.thehindu.com/news/national/andhra-pradesh/feeder/default.rss",
     "thehindu_ts": "https://www.thehindu.com/news/national/telangana/feeder/default.rss",
 }
@@ -70,10 +78,10 @@ DISTRICTS = {
         "Amaravati": ["amaravati"],
     },
     "Telangana": {
-        "Hyderabad": ["hyderabad", "secunderabad", "old city"],
+        "Hyderabad": ["hyderabad", "secunderabad", "old city", "banjara hills", "jubilee hills", "begumpet", "charminar"],
         "Cyberabad": ["cyberabad", "gachibowli", "madhapur", "kukatpally"],
         "Rachakonda": ["rachakonda", "lb nagar", "uppal"],
-        "Rangareddy": ["rangareddy", "ranga reddy", "shamshabad"],
+        "Rangareddy": ["rangareddy", "ranga reddy", "shamshabad", "himayatsagar", "rajendranagar", "narsingi", "shadnagar"],
         "Medchal-Malkajgiri": ["medchal", "malkajgiri"],
         "Sangareddy": ["sangareddy", "patancheru"],
         "Warangal": ["warangal", "hanamkonda", "kazipet"],
@@ -92,6 +100,49 @@ DISTRICTS = {
         "Kamareddy": ["kamareddy"],
         "Mancherial": ["mancherial"],
         "Komaram Bheem Asifabad": ["asifabad", "komaram bheem"],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Sub-areas inside a district (police-station / locality level).
+#   "unique":  names that only exist here -> also tags the parent district
+#   "context": common names (One Town, Beach Road...) -> only counted when the
+#              story already mentions the parent district
+# ---------------------------------------------------------------------------
+SUB_AREAS = {
+    "Visakhapatnam": {
+        "unique": {
+            "Gajuwaka": ["gajuwaka"],
+            "MVP Colony": ["mvp colony", "mvp police"],
+            "Madhurawada": ["madhurawada", "pm palem", "kommadi", "midhilapuri"],
+            "Rushikonda / Yendada": ["rushikonda", "yendada", "sagar nagar"],
+            "Bheemunipatnam": ["bheemunipatnam", "bheemili"],
+            "Anandapuram": ["anandapuram"],
+            "Pendurthi": ["pendurthi", "chinamushidiwada", "vepagunta"],
+            "Simhachalam / Gopalapatnam": ["simhachalam", "gopalapatnam", "adavivaram"],
+            "Dwaraka Nagar": ["dwaraka nagar", "dwarakanagar", "dwaraka police"],
+            "Maddilapalem": ["maddilapalem"],
+            "Seethammadhara": ["seethammadhara", "akkayyapalem"],
+            "Arilova": ["arilova", "chinagadili"],
+            "Kancharapalem": ["kancharapalem"],
+            "Marripalem / NAD": ["marripalem", "nad junction", "nad kotha road"],
+            "Allipuram / Jagadamba": ["allipuram", "jagadamba", "suryabagh"],
+            "Maharanipeta": ["maharanipeta", "lawsons bay"],
+            "Steel Plant / Kurmannapalem": ["steel plant", "ukkunagaram", "kurmannapalem", "vadlapudi"],
+            "Duvvada / Aganampudi": ["duvvada", "aganampudi"],
+            "Malkapuram / Sriharipuram": ["malkapuram", "sriharipuram"],
+            "Visalakshinagar": ["visalakshinagar", "visalakshi nagar"],
+            "Kailasagiri": ["kailasagiri"],
+        },
+        "context": {
+            "One Town / Old Town": ["one town", "old town", "1-town"],
+            "Two Town": ["two town", "2-town"],
+            "Three Town": ["three town", "3-town"],
+            "Beach Road / RK Beach": ["beach road", "rk beach", "r.k. beach"],
+            "Port area": ["port area", "harbour", "fishing harbour"],
+            "Airport": ["airport"],
+            "Railway station": ["railway station"],
+        },
     },
 }
 

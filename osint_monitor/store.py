@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS items (
     matched      TEXT,
     llm_summary  TEXT,
     cluster_id   TEXT,
-    first_seen   TEXT NOT NULL
+    first_seen   TEXT NOT NULL,
+    areas        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
 """
@@ -33,6 +34,10 @@ class Store:
     def __init__(self, path: str):
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(items)")}
+        if "areas" not in cols:  # migrate databases created before sub-areas existed
+            self.conn.execute("ALTER TABLE items ADD COLUMN areas TEXT")
+            self.conn.commit()
 
     def upsert(self, items: list[NewsItem]) -> int:
         """Insert new items; returns how many were new."""
@@ -41,16 +46,18 @@ class Store:
         new = sum(1 for it in items if it.item_id not in existing)
         for it in items:
             self.conn.execute(
-                """INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """INSERT INTO items (item_id,title,link,summary,published,source,feed,categories,
+                   state,districts,severity,matched,llm_summary,cluster_id,first_seen,areas)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(item_id) DO UPDATE SET
                      categories=excluded.categories, state=excluded.state,
-                     districts=excluded.districts, severity=excluded.severity,
+                     districts=excluded.districts, areas=excluded.areas, severity=excluded.severity,
                      matched=excluded.matched, cluster_id=excluded.cluster_id,
                      llm_summary=COALESCE(NULLIF(excluded.llm_summary,''), items.llm_summary)""",
                 (it.item_id, it.title, it.link, it.summary, it.published.isoformat(),
                  it.source, it.feed, json.dumps(it.categories), it.state,
                  json.dumps(it.districts), it.severity, json.dumps(it.matched_terms),
-                 it.llm_summary, it.cluster_id, now))
+                 it.llm_summary, it.cluster_id, now, json.dumps(it.areas)))
         self.conn.commit()
         return new
 
@@ -73,5 +80,6 @@ class Store:
             it.matched_terms = json.loads(r[11] or "[]")
             it.llm_summary = r[12] or ""
             it.cluster_id = r[13] or ""
+            it.areas = json.loads(r[15] or "[]") if len(r) > 15 else []
             out.append(it)
         return out

@@ -28,6 +28,7 @@ class NewsItem:
     categories: list[str] = field(default_factory=list)
     state: str = ""
     districts: list[str] = field(default_factory=list)
+    areas: list[str] = field(default_factory=list)
     severity: int = 0
     matched_terms: list[str] = field(default_factory=list)
     llm_summary: str = ""

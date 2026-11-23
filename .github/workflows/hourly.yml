@@ -30,6 +30,7 @@ jobs:
         env:
           OSINT_DB: data/osint_monitor.db
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OSINT_REFRESH_URL: ${{ vars.OSINT_REFRESH_URL }}
         run: python -m osint_monitor --out site/index.html --json-out site/incidents.json
 
       - name: Save history (SQLite) back to the repo

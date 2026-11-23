@@ -69,6 +69,17 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(it.categories, [])
         self.assertEqual(it.severity, 0)
 
+    def test_vizag_unique_area_tags_district(self):
+        it = classify(item("Chain snatching in Gajuwaka, two held"))
+        self.assertEqual(it.areas, ["Gajuwaka"])
+        self.assertIn("Visakhapatnam", it.districts)
+        self.assertEqual(it.state, "Andhra Pradesh")
+
+    def test_context_area_needs_vizag_mention(self):
+        self.assertEqual(classify(item("Beach road accident in Chennai, one killed")).areas, [])
+        it = classify(item("Ganja seized near One Town police station in Visakhapatnam"))
+        self.assertIn("One Town / Old Town", it.areas)
+
     def test_word_boundaries(self):
         # "ied" must not match inside "studied"; "otp" alone is too weak
         it = classify(item("Student studied OTP systems at Warangal college"))

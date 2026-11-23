@@ -23,6 +23,12 @@ _DISTRICT_PATTERNS = {
     state: {d: list(_compile(aliases).values()) for d, aliases in dists.items()}
     for state, dists in config.DISTRICTS.items()
 }
+_AREA_PATTERNS = {
+    district: {kind: {a: list(_compile(al).values()) for a, al in areas.items()}
+               for kind, areas in spec.items()}
+    for district, spec in config.SUB_AREAS.items()
+}
+_DISTRICT_STATE = {d: s for s, dm in config.DISTRICTS.items() for d in dm}
 _STATE_PATTERNS = {s: list(_compile(a).values()) for s, a in config.STATE_ALIASES.items()}
 
 
@@ -53,6 +59,20 @@ def classify(item: NewsItem) -> NewsItem:
     for state, pats in _STATE_PATTERNS.items():
         if any(p.search(text) for p in pats):
             states.add(state)
+    areas = []
+    for district, kinds in _AREA_PATTERNS.items():
+        for area, pats in kinds.get("unique", {}).items():
+            if any(p.search(text) for p in pats):
+                areas.append(area)
+        if areas or district in districts:
+            for area, pats in kinds.get("context", {}).items():
+                if any(p.search(text) for p in pats):
+                    areas.append(area)
+        if areas and district not in districts:
+            districts.append(district)
+            states.add(_DISTRICT_STATE.get(district, ""))
+    states.discard("")
+    item.areas = areas
     item.districts = districts
     item.state = " / ".join(sorted(states)) if states else "Other/National"
 

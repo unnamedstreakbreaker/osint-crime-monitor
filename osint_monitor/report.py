@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import html
+import json
 from datetime import datetime, timedelta
 
 from .fetcher import NewsItem
-from .config import DISPLAY_TZ
+from .config import DISPLAY_TZ, REFRESH_URL, REPO
 
 try:
     from zoneinfo import ZoneInfo
@@ -45,6 +46,18 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .sev{font-weight:600}.summary{margin:6px 0 0;font-size:14px}
 .also{font-size:12.5px;color:var(--muted);margin-top:4px}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:20px}
+.filters{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 0 10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.filters select,.filters input{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #cfd6de;border-radius:6px;background:#fff;color:var(--ink)}
+.filters input{flex:1;min-width:160px}
+.chip{font:inherit;font-size:13px;border:1px solid #cfd6de;background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer;color:var(--ink)}
+.chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.shown{color:var(--muted);font-size:13px;margin-left:auto}
+.hdr{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;flex-wrap:wrap}
+.refresh{font:inherit;font-size:14px;font-weight:600;background:#fff;color:var(--accent);border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
+.refresh:disabled{opacity:.7;cursor:progress}
+#rstatus{font-size:12.5px;margin-top:6px;opacity:.9;max-width:420px;text-align:right}
+.hidden{display:none!important}
 @media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}main,header{padding-left:16px;padding-right:16px}}
 """
 
@@ -62,14 +75,19 @@ def e(s) -> str:
 def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
     color = SEV_COLOR[lead.severity]
     tags = "".join(f'<span class="tag">{e(c)}</span>' for c in lead.categories)
-    where = ", ".join(lead.districts) or lead.state
+    where = ", ".join(lead.areas + [d for d in lead.districts]) or lead.state
     summary = lead.llm_summary or lead.summary[:260]
     also = ""
     if dupes:
         srcs = sorted({d.source for d in dupes if d.source != lead.source})
         if srcs:
             also = f'<div class="also">Also reported by: {e(", ".join(srcs[:6]))}</div>'
-    return f"""<div class="item" style="border-left-color:{color}">
+    search = " ".join([lead.title, summary, where] + lead.categories).lower()
+    return f"""<div class="item" style="border-left-color:{color}"
+ data-ts="{int(lead.published.timestamp())}" data-sev="{lead.severity}"
+ data-state="{e(lead.state)}" data-districts="{e('|'.join(lead.districts))}"
+ data-areas="{e('|'.join(lead.areas))}" data-cats="{e('|'.join(lead.categories))}"
+ data-q="{e(search)}">
 <h3><a href="{e(lead.link)}" target="_blank" rel="noopener">{e(lead.title)}</a></h3>
 <div class="meta"><span class="sev" style="color:{color}">{SEV_LABEL[lead.severity]}</span>
  · {e(where)} · {e(lead.source)} · {local(lead.published):%d %b %H:%M} IST</div>
@@ -78,16 +96,107 @@ def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
 </div>"""
 
 
+_JS = r"""
+const CFG = __CFG__;
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const cards = $$('#list .item');
+const F = {win: $('#f-win'), state: $('#f-state'), district: $('#f-district'), area: $('#f-area'),
+           cat: $('#f-cat'), sev: $('#f-sev'), q: $('#f-q')};
+
+function uniq(attr) {
+  const c = {};
+  cards.forEach(el => (el.dataset[attr] || '').split('|').filter(Boolean).forEach(v => c[v] = (c[v] || 0) + 1));
+  return Object.entries(c).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+function fill(sel, attr, label) {
+  sel.innerHTML = `<option value="">${label}</option>` +
+    uniq(attr).map(([v, n]) => `<option value="${v.replace(/"/g, '&quot;')}">${v} (${n})</option>`).join('');
+}
+fill(F.state, 'state', 'All states'); fill(F.district, 'districts', 'All districts');
+fill(F.area, 'areas', 'All Vizag areas'); fill(F.cat, 'cats', 'All categories');
+
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  for (const [k, el] of Object.entries(F)) if (p.has(k)) el.value = p.get(k);
+}
+function writeHash() {
+  const p = new URLSearchParams();
+  for (const [k, el] of Object.entries(F)) if (el.value && !(k === 'sev' && el.value === '0') && !(k === 'win' && el.value === String(CFG.defaultWin))) p.set(k, el.value);
+  history.replaceState(null, '', p.toString() ? '#' + p : location.pathname);
+}
+function apply() {
+  const now = Date.now() / 1000, win = +F.win.value * 3600, q = F.q.value.trim().toLowerCase();
+  let shown = 0, high = 0;
+  cards.forEach(el => {
+    const d = el.dataset;
+    const ok = (now - +d.ts <= win)
+      && (!F.state.value || d.state.split(' / ').includes(F.state.value) || d.state === F.state.value)
+      && (!F.district.value || d.districts.split('|').includes(F.district.value))
+      && (!F.area.value || d.areas.split('|').includes(F.area.value))
+      && (!F.cat.value || d.cats.split('|').includes(F.cat.value))
+      && (+d.sev >= +F.sev.value)
+      && (!q || d.q.includes(q));
+    el.classList.toggle('hidden', !ok);
+    if (ok) { shown++; if (+d.sev >= 4) high++; }
+  });
+  $('#k-inc').textContent = shown; $('#k-high').textContent = high;
+  $('#shown').textContent = `${shown} of ${cards.length} incidents`;
+  $('#empty').classList.toggle('hidden', shown > 0);
+  $('#chip-vizag').classList.toggle('on', F.district.value === 'Visakhapatnam');
+  $('#chip-all').classList.toggle('on', !F.district.value && !F.area.value && !F.state.value && !F.cat.value && !q && F.sev.value === '0');
+  writeHash();
+}
+Object.values(F).forEach(el => el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', apply));
+F.area.addEventListener('change', () => { if (F.area.value) F.district.value = 'Visakhapatnam'; apply(); });
+$('#chip-vizag').onclick = () => { F.district.value = F.district.value === 'Visakhapatnam' ? '' : 'Visakhapatnam'; if (!F.district.value) F.area.value = ''; apply(); };
+$('#chip-all').onclick = () => { ['state', 'district', 'area', 'cat', 'q'].forEach(k => F[k].value = ''); F.sev.value = '0'; apply(); };
+readHash(); apply();
+
+// ---- refresh -------------------------------------------------------------
+const btn = $('#refresh'), st = $('#rstatus');
+async function latest() {
+  try { const r = await fetch('status.json?t=' + Date.now(), {cache: 'no-store'}); return (await r.json()).generated_at || 0; }
+  catch (e) { return 0; }
+}
+let polling = null;
+function poll(maxMin) {
+  clearInterval(polling);
+  const until = Date.now() + maxMin * 60000;
+  polling = setInterval(async () => {
+    if (await latest() > CFG.generatedAt) { st.textContent = 'New news arrived. Reloading…'; location.reload(); }
+    else if (Date.now() > until) { clearInterval(polling); btn.disabled = false; btn.textContent = '↻ Refresh now';
+      st.textContent = 'Still running on GitHub. This page will update on its next check.'; }
+  }, 15000);
+}
+btn.onclick = async () => {
+  btn.disabled = true; btn.textContent = 'Refreshing…';
+  if (CFG.refreshUrl) {
+    try {
+      const r = await fetch(CFG.refreshUrl, {method: 'POST'});
+      const j = await r.json();
+      st.textContent = j.message || 'Fetching the latest news (about 2–3 minutes)…';
+    } catch (e) { st.textContent = 'Could not reach the refresh service. Try again in a minute.'; btn.disabled = false; btn.textContent = '↻ Refresh now'; return; }
+  } else {
+    window.open(CFG.actionsUrl, '_blank', 'noopener');
+    st.textContent = 'On the GitHub page that opened, click "Run workflow". This page reloads by itself when the new news is ready (about 2–3 minutes).';
+  }
+  poll(8);
+};
+// background check every 5 minutes; reload quietly if a newer brief exists
+setInterval(async () => { if (!polling && await latest() > CFG.generatedAt) location.reload(); }, 300000);
+"""
+
+
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
            emerging, now: datetime, hours: int, demo: bool) -> str:
-    recent_start = now - timedelta(hours=hours)
-    recent = [cl for cl in clusters.values()
-              if cl[0].categories and cl[0].published >= recent_start]
-    recent.sort(key=lambda cl: (-cl[0].severity, -len(cl), -cl[0].published.timestamp()))
+    week_start = now - timedelta(days=7)
+    incidents = [cl for cl in clusters.values()
+                 if cl[0].categories and cl[0].published >= week_start]
+    incidents.sort(key=lambda cl: (-cl[0].severity, -len(cl), -cl[0].published.timestamp()))
+    incidents = incidents[:500]
 
+    recent_start = now - timedelta(hours=24)
     n_articles = sum(1 for i in items if i.published >= recent_start)
-    n_incidents = len(recent)
-    n_high = sum(1 for cl in recent if cl[0].severity >= 4)
     n_spikes = sum(1 for t in trends if t["spike"])
 
     trend_rows = "".join(
@@ -106,41 +215,73 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
         f'<span class="tag">{e(t["term"])} · {t["count"]}{"<span class=new>NEW</span>" if t["new"] else ""}</span>'
         for t in emerging) or '<span class="meta">None detected this week.</span>'
 
-    cards = "".join(_item_card(cl[0], cl[1:]) for cl in recent[:40]) or \
-        '<p class="meta">No categorised incidents in this window.</p>'
+    cards = "".join(_item_card(cl[0], cl[1:]) for cl in incidents)
 
-    banner = ('<div class="banner"><b>DEMO MODE</b> — headlines below are synthetic sample data, '
+    banner = ('<div class="banner"><b>DEMO MODE</b>: headlines below are synthetic sample data, '
               'not real incidents.</div>') if demo else ""
+
+    win_opts = "".join(f'<option value="{h}"{" selected" if h == hours else ""}>{lbl}</option>'
+                       for h, lbl in ((6, "Last 6 hours"), (24, "Last 24 hours"),
+                                      (72, "Last 3 days"), (168, "Last 7 days")))
+    if hours not in (6, 24, 72, 168):
+        win_opts += f'<option value="{hours}" selected>Last {hours} hours</option>'
+    sev_opts = "".join(f'<option value="{v}">{lbl}</option>' for v, lbl in
+                       ((0, "Any severity"), (3, "Elevated +"), (4, "High +"), (5, "Critical only")))
+
+    cfg = json.dumps({
+        "refreshUrl": REFRESH_URL,
+        "actionsUrl": f"https://github.com/{REPO}/actions/workflows/hourly.yml",
+        "generatedAt": int(now.timestamp()),
+        "defaultWin": hours,
+    })
 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="900">
-<title>Open-Source Crime &amp; Threat Brief — {local(now):%d %b %Y}</title><style>{CSS}</style></head><body>
-<header><h1>Open-Source Crime &amp; Threat Brief</h1>
-<p>Andhra Pradesh &amp; Telangana · generated {local(now):%d %b %Y, %H:%M} IST · last {hours}h of public news</p></header>
+<title>Open-Source Crime &amp; Threat Brief, {local(now):%d %b %Y}</title><style>{CSS}</style></head><body>
+<header><div class="hdr"><div><h1>Open-Source Crime &amp; Threat Brief</h1>
+<p>Andhra Pradesh &amp; Telangana · last updated {local(now):%d %b %Y, %H:%M} IST · updates hourly</p></div>
+<div style="text-align:right"><button class="refresh" id="refresh">↻ Refresh now</button><div id="rstatus"></div></div></div></header>
 {banner}
 <main>
 <div class="kpis">
-<div class="kpi"><b>{n_articles}</b><span>articles scanned</span></div>
-<div class="kpi"><b>{n_incidents}</b><span>distinct incidents</span></div>
-<div class="kpi"><b>{n_high}</b><span>high / critical</span></div>
+<div class="kpi"><b>{n_articles}</b><span>articles scanned (24h)</span></div>
+<div class="kpi"><b id="k-inc">0</b><span>incidents shown</span></div>
+<div class="kpi"><b id="k-high">0</b><span>high / critical shown</span></div>
 <div class="kpi"><b>{n_spikes}</b><span>category spikes (7d)</span></div>
 </div>
 
-<h2>Trends — last 7 days vs previous 7</h2>
+<h2>Incidents</h2>
+<div class="filters">
+<div class="frow" style="margin-bottom:8px">
+<button class="chip" id="chip-all">All</button>
+<button class="chip" id="chip-vizag">Vizag only</button>
+<select id="f-win" aria-label="Time window">{win_opts}</select>
+<select id="f-sev" aria-label="Severity">{sev_opts}</select>
+<span class="shown" id="shown"></span>
+</div>
+<div class="frow">
+<select id="f-state" aria-label="State"></select>
+<select id="f-district" aria-label="District"></select>
+<select id="f-area" aria-label="Vizag area"></select>
+<select id="f-cat" aria-label="Category"></select>
+<input id="f-q" type="search" placeholder="Search (e.g. ganja, digital arrest)" aria-label="Search">
+</div>
+</div>
+<div id="list">{cards}</div>
+<p class="meta hidden" id="empty">No incidents match these filters. Try a longer time window.</p>
+
+<h2>Trends: last 7 days vs previous 7</h2>
 <table><tr><th>Category</th><th>State</th><th class=num>This week</th><th class=num>Last week</th><th class=num>Change</th></tr>
 {trend_rows}</table>
 
-<h2>District hotspots — last 7 days</h2>
+<h2>District hotspots: last 7 days</h2>
 <table><tr><th>District / Commissionerate</th><th class=num>Incidents</th><th>Top categories</th></tr>
 {hot_rows}</table>
 
 <h2>Modus operandi watch</h2>
 <div>{emerging_html}</div>
-
-<h2>Incidents — last {hours}h (highest severity first)</h2>
-{cards}
 </main>
-<footer>Updates every hour · <a href="incidents.json">incidents.json</a><br>Compiled automatically from public news sources. Unverified — corroborate before acting.
+<footer>Updates every hour · <a href="incidents.json">incidents.json</a><br>Compiled automatically from public news sources. Unverified: corroborate before acting.
 Severity is a keyword-based estimate, not an assessment.</footer>
+<script>{_JS.replace("__CFG__", cfg)}</script>
 </body></html>"""
