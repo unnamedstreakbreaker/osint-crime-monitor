@@ -149,6 +149,10 @@ SUB_AREAS = {
             "Malkapuram / Sriharipuram": ["malkapuram", "sriharipuram"],
             "Visalakshinagar": ["visalakshinagar", "visalakshi nagar"],
             "Kailasagiri": ["kailasagiri"],
+            "Siripuram / Waltair": ["siripuram", "waltair", "law college", "andhra university", "au campus"],
+            "Hanumanthawaka / Isukathota": ["hanumanthawaka", "isukathota", "venkojipalem"],
+            "RTC Complex / Dabagardens": ["rtc complex", "dabagardens", "dwaraka bus station"],
+            "Akkireddypalem / BHPV": ["akkireddypalem", "bhpv", "sheela nagar", "sheelanagar"],
         },
         "context": {
             "One Town / Old Town": ["one town", "old town", "1-town"],
@@ -227,7 +231,7 @@ CATEGORIES = {
     "Road accidents": {
         "road accident": 3, "road accidents": 3, "hit-and-run": 3, "hit and run": 3, "accident": 1,
         "collided": 2, "rammed": 2, "overturned": 2, "fatal": 1, "drunk driving": 3, "drunken driving": 3,
-        "killed in accident": 3, "mishap": 1, "run over": 2, "lorry": 2, "truck": 1, "motorcycle": 2,
+        "killed in accident": 3, "dies in road": 3, "road mishap": 3, "injured in road": 3, "mishap": 1, "run over": 2, "lorry": 2, "truck": 1, "motorcycle": 2,
         "two-wheeler": 1, "bike": 1, "pillion": 2, "rash driving": 3, "collision": 2, "hits motorcycle": 3,
         "hits bike": 3, "lorry hits": 3, "bus hits": 3, "car hits": 3, "rams": 2, "speeding": 2,
     },
@@ -239,7 +243,7 @@ CATEGORIES = {
     "Smuggling & illegal trade": {
         "red sanders": 3, "smuggling": 2, "smuggled": 2, "pds rice": 2,
         "gold seized": 2, "illicit liquor": 2, "sand mining": 2, "hawala": 3,
-        "counterfeit": 2, "fake currency": 3, "gutka": 1, "poaching": 2,
+        "counterfeit": 2, "fake currency": 3, "fake note": 3, "fake notes": 3, "gutka": 1, "poaching": 2,
     },
     "Advisories & alerts": {
         "advisory": 2, "alert": 1, "cert-in": 3, "warns public": 2, "warn public": 2,

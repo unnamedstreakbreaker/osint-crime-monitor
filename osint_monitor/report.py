@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from . import charts
 from .config import DISPLAY_TZ, REPO
 from .fetcher import NewsItem
-from .explain import predictions, EVIDENCE_RULE
+from .explain import predictions, EVIDENCE_RULE, city_insights, fmt_rupees
 from . import config
 from urllib.parse import urlparse, parse_qs
 
@@ -114,6 +114,18 @@ details.method summary{cursor:pointer;font-weight:600;color:var(--navy)}
 details.method h5{margin:12px 0 4px;font-size:14.5px}
 details.method ul,details.method ol{margin:0;padding-left:20px}
 details.early{margin-top:8px}details.early>summary{cursor:pointer;font:600 18px var(--display);color:var(--ink2)}
+
+.brief{background:var(--navy);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+.brief h3{margin:0 0 8px!important;color:#fff;font:600 22px/1.1 var(--display)}
+.brief ul{margin:0;padding-left:20px}.brief li{margin:5px 0;font-size:15px;line-height:1.45}
+.glance{margin:0;display:grid;grid-template-columns:96px 1fr;border:1px solid #e8ecf1;border-radius:8px;overflow:hidden;font-size:14.5px}
+.glance dt,.glance dd{padding:6px 10px;border-bottom:1px solid #eef1f5;margin:0}
+.glance dt{background:var(--soft);font-weight:600;color:var(--ink2);font-size:13.5px}
+.glance dt:nth-last-of-type(1),.glance dd:last-child{border-bottom:0}
+.insight{background:var(--brass-soft);border-left:4px solid var(--brass);border-radius:6px;padding:8px 12px;font-weight:500;font-size:15px;margin:0}
+.focus{font-size:14px;margin:0}.focus b{color:var(--navy)}
+details.whyd summary{cursor:pointer;font-weight:600;color:var(--navy);font-size:14.5px}
+details.whyd ul{margin:6px 0 0;padding-left:18px;font-size:14px}
 
 /* tile grid */
 main{max-width:1240px;margin:0 auto;padding:26px 32px 50px}
@@ -256,19 +268,30 @@ def _bars(rows, value, label=lambda r: r["key"], fmt=lambda v: f"{v:.0f}") -> st
 def _pred_card(p) -> str:
     arrow = {"up": ' <span class="up">▲ rising</span>', "down": ' <span class="down">▼ easing</span>'}.get(p["direction"], "")
     chance = (f'<div class="chance"><s><b style="width:{p["chance"] * 100:.0f}%"></b></s>'
-              f'At least one: {e(p["chance_text"])}{arrow}</div>') if p["show_chance"] else (f'<div class="evline">{arrow}</div>' if arrow else "")
+              f'At least one: {e(p["chance_text"])}{arrow}</div>') if p["show_chance"] else ""
     ev = "".join(
         f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{e(x["title"][:120])} '
         f'<span>({e(x["place"])}, {e(x["source"])}, {x["when"]})</span>'
         + (f' <em>also {e(", ".join(x["also"][:3]))}</em>' if x["also"] else "") + "</a>" for x in p["evidence"])
+    rows = [("Crime type", p["category"]),
+            ("Where", p["where_short"]),
+            ("Expected", f"About {p['expected']:.0f} in the next 7 days (likely {p['low']}–{p['high']}); "
+                         f"{p['n7']} in the last 7 days"),
+            ("Who", ", ".join(p["victims"]).capitalize() if p["victims"] else "Not stated in reports"),
+            ("Method", ", ".join(p["methods"]).capitalize() if p["methods"] else "Not stated in reports")]
+    if p["losses_n"]:
+        rows.append(("Money lost", f"{fmt_rupees(p['losses_total'])} across {p['losses_n']} case{'s' if p['losses_n'] != 1 else ''}"))
+    rows.append(("Evidence", f"{p['evidence_grade']}: {p['evidence_text']}"))
+    glance = "".join(f"<dt>{k}</dt><dd>{e(v)}</dd>" for k, v in rows)
     return f"""<article class="pred">
-<div class="pred-top"><div><h4>{e(p["headline"])}</h4><p class="what">{e(p["what"])}</p>
-<span class="grade g-{p["evidence_grade"]}">Evidence: {p["evidence_grade"]}</span></div>
-<div class="count">~{p["expected"]:.0f}<small>expected next 7 days<br>likely {p["low"]}–{p["high"]}</small></div></div>
-<div class="evline">Based on {e(p["evidence_text"])}.</div>
+<div class="pred-top"><div><h4>{e(p["headline"])}</h4>
+<span class="grade g-{p["evidence_grade"]}">Evidence: {p["evidence_grade"]}</span>{arrow}</div>
+<div class="count">~{p["expected"]:.0f}<small>expected next 7 days</small></div></div>
+<p class="insight">{e(p["insight"])}</p>
+<dl class="glance">{glance}</dl>
 {chance}
-<dl><dt>Why</dt><dd><ul>{"".join(f"<li>{e(w)}</li>" for w in p["why"])}</ul></dd>
-<dt>Where</dt><dd>{e(p["where"])}</dd></dl>
+{f'<p class="focus"><b>Suggested focus:</b> {e(p["focus"])}.</p>' if p["focus"] else ''}
+<details class="whyd"><summary>Why this is predicted</summary><ul>{"".join(f"<li>{e(w)}</li>" for w in p["why"])}</ul></details>
 {f'<details class="ev"><summary>All {len(p["evidence"])} incident{"s" if len(p["evidence"]) != 1 else ""} this is based on</summary>{ev}</details>' if ev else ''}
 </article>"""
 
@@ -529,10 +552,11 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
 {charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
 <details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
 <h3>By category, last 14 days and next 7</h3><div class="sm">{small or '<p class="meta">Not enough data yet.</p>'}</div>"""
-        allp = predictions(outlook, 12)
-        solid = [p for p in allp if p["evidence_grade"] != "Limited"][:6]
-        early = [p for p in allp if p["evidence_grade"] == "Limited"][:6]
-        watch_body = (_record_html(record, outlook.conf)
+        allp = predictions(outlook, 8)
+        insights = city_insights(outlook, allp, city)
+        watch_body = (f'<div class="brief"><h3>Key insights for {e(cname)}</h3><ul>'
+                      + "".join(f"<li>{e(x)}</li>" for x in insights) + "</ul></div>"
+                      + _record_html(record, outlook.conf)
                       + f"""<details class="method"><summary>Method, sources and limits</summary>
 <h5>What is predicted</h5><p>How many incidents of a crime type will be <b>reported in the news</b> from a district in the next 7 days.
 Not specific crimes, people or places.</p>
@@ -550,12 +574,11 @@ Not specific crimes, people or places.</p>
 <li>Monitoring started {outlook.reliable_from + timedelta(days=2):%d %b %Y}; confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} days). Medium from 7 days, High from 21.</li></ul>
 <h5>How to verify</h5><p>Each card lists every incident it is based on, with links to the original reports and other outlets that covered it.</p>
 </details>"""
-                      + "<h3>Predictions with Strong or Moderate evidence</h3>"
-                      + (f'<div class="preds">{"".join(_pred_card(p) for p in solid)}</div>' if solid
-                         else f"<p class='meta'>None yet for {e(cname)}. A prediction needs at least 3 incidents from 2 different outlets; see early signals below.</p>")
-                      + (f'<details class="early"><summary>Early signals with limited evidence ({len(early)})</summary>'
-                         f'<p class="meta">Fewer than 3 incidents or only one outlet. Worth watching, not acting on.</p>'
-                         f'<div class="preds">{"".join(_pred_card(p) for p in early)}</div></details>' if early else "")
+                      + f"<h3>Predictions for the next 7 days</h3>"
+                      + "<p class='meta' style='margin-top:-4px'>Strongest evidence first. Limited means fewer than 3 incidents "
+                        "or a single outlet: worth watching, not acting on alone.</p>"
+                      + (f'<div class="preds">{"".join(_pred_card(p) for p in allp)}</div>' if allp
+                         else f"<p class='meta'>No incidents in the last 30 days in and around {e(cname)} to base a prediction on.</p>")
                       + "<h3>All combinations at a glance</h3>"
                       + _outlook_table(outlook.watchlist(top=15), "Category in district", "Not enough district-level history yet.")
                       + "<h3>District outlook</h3>"
@@ -575,10 +598,10 @@ Not specific crimes, people or places.</p>
         tp = predictions(outlook, 3)
         t_watch = _tile("watch", "target", "Predictions",
                         ('<ul class="heads">' + "".join(
-                            f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p["category"].lower())}</b> in {e(p["district"])}'
-                            f'<span>Evidence: {p["evidence_grade"]}{(", around " + ", ".join(p["places"][:2])) if p["places"] else ""}</span></div></li>'
-                            for p in tp) + "</ul><p>Expected next 7 days. Open for the evidence, why and where.</p>")
-                        if tp else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
+                            f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p["category"].lower())}</b>'
+                            f'<span>{e(p["where_short"])} · evidence {p["evidence_grade"].lower()}</span></div></li>'
+                            for p in tp) + "</ul><p>Next 7 days. Open for insights: type, where, who, why.</p>")
+                        if tp else '<p class="empty-t">Builds up as incidents come in.</p>')
         ar = outlook.area_rows(top=4)
         t_areas = _tile("areas", "grid", f"{cname} localities",
                         _bars(ar, lambda r: r["last7"] or r["expected"], fmt=lambda v: f"{v:.0f}") + "<p>Incidents in the last 7 days</p>"
