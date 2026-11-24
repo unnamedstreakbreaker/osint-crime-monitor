@@ -227,7 +227,9 @@ CATEGORIES = {
     "Road accidents": {
         "road accident": 3, "road accidents": 3, "hit-and-run": 3, "hit and run": 3, "accident": 1,
         "collided": 2, "rammed": 2, "overturned": 2, "fatal": 1, "drunk driving": 3, "drunken driving": 3,
-        "killed in accident": 3, "mishap": 1, "run over": 2,
+        "killed in accident": 3, "mishap": 1, "run over": 2, "lorry": 2, "truck": 1, "motorcycle": 2,
+        "two-wheeler": 1, "bike": 1, "pillion": 2, "rash driving": 3, "collision": 2, "hits motorcycle": 3,
+        "hits bike": 3, "lorry hits": 3, "bus hits": 3, "car hits": 3, "rams": 2, "speeding": 2,
     },
     "Crimes against women & children": {
         "pocso": 3, "sexual assault": 3, "rape": 3, "dowry": 2, "sexual harassment": 3, "harassed woman": 2,
