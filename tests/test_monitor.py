@@ -168,4 +168,30 @@ class ExplainTests(unittest.TestCase):
         self.assertIn("digital arrest", p["what"])
         self.assertIn("Gajuwaka", p["where"]); self.assertIn("MVP Colony", p["where"])
         self.assertTrue(any("last 7 days" in w for w in p["why"]))
-        self.assertEqual(len(p["evidence"]), 3)
+        self.assertEqual(len(p["evidence"]), 6)
+        # all six came from one outlet -> not independent enough to call strong
+        self.assertEqual(p["evidence_grade"], "Limited")
+        self.assertFalse(p["show_chance"])
+
+    def test_evidence_grades_and_track_record(self):
+        from datetime import timezone as tz, date
+        from osint_monitor.forecast import Outlook
+        from osint_monitor.explain import evidence, track_record, all_for_log
+        from osint_monitor.store import Store
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        items = []
+        for k in range(6):
+            it = classify(item(f"Hyderabad man loses Rs {k + 3} lakh in digital arrest scam", 6 + k * 30, now=now))
+            it.source = ["Outlet A", "Outlet B", "Outlet C"][k % 3]
+            items.append(it)
+        o = Outlook({i.item_id: [i] for i in items}, (now - timedelta(days=20)).date(), now.date(), tz.utc)
+        self.assertEqual(evidence(o, ("Cyber fraud", "Hyderabad"))["grade"], "Strong")
+        # log a prediction 9 days ago and score it against what happened
+        st = Store(":memory:")
+        st.log_predictions(date(2026, 11, 14), [{"category": "Cyber fraud", "district": "Hyderabad",
+                                                  "expected": 4, "low": 2, "high": 7, "evidence": "Strong"}])
+        tr = track_record(st, o)
+        self.assertEqual(tr["n"], 1)
+        self.assertEqual(tr["recent"][0]["actual"], 4)      # cases on 17, 18, 19, 20 Nov
+        self.assertTrue(tr["recent"][0]["hit"])
+        self.assertEqual(all_for_log(o)[0]["category"], "*")

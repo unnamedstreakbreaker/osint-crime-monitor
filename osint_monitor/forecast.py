@@ -55,6 +55,7 @@ class Outlook:
         self.today = today
         self.tz = tz
         self.members = defaultdict(list)      # (category, district) -> lead items, newest first
+        self.clusters_of = {}                 # lead item_id -> all articles reporting that incident
         self.days = [today - timedelta(days=i) for i in range(history_days - 1, -1, -1)]
         self.reliable_from = tracking_start - timedelta(days=FEED_LOOKBACK_DAYS)
         self.reliable_days = [d for d in self.days if d >= self.reliable_from]
@@ -80,6 +81,7 @@ class Outlook:
                 self.by_district[dist][d] += 1
                 self.by_cat_district[(lead.categories[0], dist)][d] += 1
                 self.members[(lead.categories[0], dist)].append(lead)
+            self.clusters_of[lead.item_id] = cl
             for a in lead.areas:
                 self.by_area[a][d] += 1
 

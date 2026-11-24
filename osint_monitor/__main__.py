@@ -16,7 +16,7 @@ from . import analysis, config, report
 from .classifier import classify, enrich_with_llm, locate
 from .demo import sample_items
 from .forecast import Outlook
-from .explain import predictions
+from .explain import predictions, all_for_log, track_record
 from .fetcher import fetch_all
 from .store import Store
 
@@ -85,7 +85,11 @@ def main(argv=None) -> int:
             t["spike"] = False
             t["baseline"] = False
 
-    page = report.render(items=items, clusters=clusters, trends=trends, hotspots=hotspots,
+    if not args.demo:
+        store.log_predictions(outlook.today, all_for_log(outlook))
+    record = track_record(store, outlook)
+
+    page = report.render(record=record, items=items, clusters=clusters, trends=trends, hotspots=hotspots,
                          emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook)
     os.makedirs(config.REPORT_DIR, exist_ok=True)
     out = args.out or os.path.join(config.REPORT_DIR,
@@ -106,7 +110,9 @@ def main(argv=None) -> int:
                    "categories": _rows(outlook.category_rows()), "districts": _rows(outlook.district_rows()),
                    "vizag_areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist()),
                    "predictions": predictions(outlook, 8),
-                   "vizag_predictions": predictions(outlook, 6, "Visakhapatnam")},
+                   "vizag_predictions": predictions(outlook, 6, "Visakhapatnam"),
+                   "track_record": {k: v for k, v in record.items() if k != "first_check"}
+                                   | {"first_check": str(record["first_check"] or "")}},
                   fh, indent=2, ensure_ascii=False)
     with open(os.path.join(os.path.dirname(out) or ".", "status.json"), "w") as fh:
         json.dump({"generated_at": int(now.timestamp()), "items": len(items)}, fh)

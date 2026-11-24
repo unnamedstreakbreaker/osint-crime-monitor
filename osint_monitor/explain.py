@@ -41,6 +41,30 @@ CATEGORY_WHAT = {
 }
 
 
+def evidence(o, key) -> dict:
+    """How much independent reporting stands behind a prediction."""
+    leads = o.members.get(key, [])
+    clusters = [o.clusters_of.get(l.item_id, [l]) for l in leads]
+    outlets = {a.source for cl in clusters for a in cl if a.source}
+    days = {l.published.astimezone(o.tz).date() for l in leads}
+    n, reports = len(leads), sum(len(cl) for cl in clusters)
+    if n >= 5 and len(outlets) >= 3 and len(days) >= 3:
+        grade = "Strong"
+    elif n >= 3 and len(outlets) >= 2:
+        grade = "Moderate"
+    else:
+        grade = "Limited"
+    span = f"{min(days):%d %b}–{max(days):%d %b}" if len(days) > 1 else (f"{min(days):%d %b}" if days else "")
+    text = (f"{n} incident{'s' if n != 1 else ''}, {reports} news report{'s' if reports != 1 else ''} "
+            f"from {len(outlets)} outlet{'s' if len(outlets) != 1 else ''}" + (f", {span}" if span else ""))
+    return {"grade": grade, "incidents": n, "reports": reports, "outlets": sorted(outlets),
+            "days": len(days), "text": text}
+
+
+EVIDENCE_RULE = ("Strong = 5+ separate incidents, reported by 3+ different outlets, on 3+ different days. "
+                 "Moderate = 3+ incidents from 2+ outlets. Limited = anything less.")
+
+
 def _chance(p: float) -> str:
     if p >= 0.95:
         return "very likely (over 95%)"
@@ -120,6 +144,9 @@ def explain(o, key, row) -> dict:
     else:
         where = f"Reports name only {dist}, not a specific locality."
 
+    ev = evidence(o, key)
+    show_chance = ev["grade"] != "Limited" and o.conf != "Low"
+
     what = CATEGORY_WHAT.get(cat, cat)
     if methods:
         what += f", especially {methods[0]}" + (f" and {methods[1]}" if len(methods) > 1 else "")
@@ -129,16 +156,56 @@ def explain(o, key, row) -> dict:
         "headline": f"{cat} in {dist}",
         "what": what,
         "expected": row["expected"], "low": row["low"], "high": row["high"],
-        "chance": row["p_any"], "chance_text": _chance(row["p_any"]),
+        "chance": row["p_any"], "chance_text": _chance(row["p_any"]), "show_chance": show_chance,
+        "evidence_grade": ev["grade"], "evidence_text": ev["text"], "outlets": ev["outlets"],
         "direction": row["direction"], "trend": row["trend"],
         "why": why,
         "where": where,
         "places": [n for n, _ in places.most_common(5)],
         "evidence": [{"title": l.title, "link": l.link, "source": l.source,
                       "when": l.published.astimezone(o.tz).strftime("%d %b"),
-                      "place": ", ".join(n for d, n in l.places if d == dist) or dist}
-                     for l in leads[:3]],
+                      "place": ", ".join(n for d, n in l.places if d == dist) or dist,
+                      "also": sorted({a.source for a in o.clusters_of.get(l.item_id, [l])} - {l.source})}
+                     for l in leads[:12]],
     }
+
+
+def all_for_log(o) -> list[dict]:
+    """Every prediction made today (not just the ones shown), so the track record isn't cherry-picked."""
+    rows = [{"category": "*", "district": "*", **o.project(o.total), "evidence": ""}]
+    for r in o.ranked(o.by_cat_district, top=500, min_expected=0.2):
+        cat, dist = r["key"]
+        if cat == "Advisories & alerts":
+            continue
+        rows.append({"category": cat, "district": dist, **r, "evidence": evidence(o, r["key"])["grade"]})
+    return rows
+
+
+def track_record(store, o) -> dict:
+    """Score predictions whose 7-day window has ended against what was actually reported."""
+    from datetime import date as _date, timedelta as _td
+    scored = []
+    for made_on, cat, dist, exp, low, high, grade, ws, we in store.due_predictions(o.today):
+        ws, we = _date.fromisoformat(ws), _date.fromisoformat(we)
+        if ws < o.days[0]:
+            continue  # older than the 30-day window we hold in memory
+        series = o.total if cat == "*" else o.by_cat_district.get((cat, dist), {})
+        actual = sum(series.get(ws + _td(days=i), 0) for i in range((we - ws).days + 1))
+        scored.append({"made_on": made_on, "category": cat, "district": dist, "expected": exp,
+                       "low": low, "high": high, "actual": actual, "evidence": grade,
+                       "hit": low <= actual <= high})
+    graded = [r for r in scored if r["category"] != "*"]
+    by_grade = {}
+    for g in ("Strong", "Moderate", "Limited"):
+        rs = [r for r in graded if r["evidence"] == g]
+        if rs:
+            by_grade[g] = {"n": len(rs), "hits": sum(r["hit"] for r in rs)}
+    first = store.first_prediction_day()
+    first_check = (_date.fromisoformat(first) + _td(days=8)) if first else None
+    return {"n": len(graded), "hits": sum(r["hit"] for r in graded), "by_grade": by_grade,
+            "total_rows": [r for r in scored if r["category"] == "*"][-7:],
+            "recent": sorted(graded, key=lambda r: r["made_on"], reverse=True)[:15],
+            "first_check": first_check}
 
 
 def predictions(o, top: int = 6, district: str | None = None) -> list[dict]:
@@ -146,4 +213,7 @@ def predictions(o, top: int = 6, district: str | None = None) -> list[dict]:
     rows = [r for r in rows if r["key"][0] != "Advisories & alerts"]   # warnings aren't crimes
     if district:
         rows = [r for r in rows if r["key"][1] == district]
-    return [explain(o, r["key"], r) for r in rows[:top]]
+    out = [explain(o, r["key"], r) for r in rows[:max(top * 3, 12)]]
+    rank = {"Strong": 0, "Moderate": 1, "Limited": 2}
+    out.sort(key=lambda p: (rank[p["evidence_grade"]], -p["expected"]))
+    return out[:top]

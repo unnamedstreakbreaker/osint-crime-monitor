@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS items (
     areas        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
+CREATE TABLE IF NOT EXISTS predictions_log (
+    made_on      TEXT NOT NULL,   -- IST date the prediction was made
+    category     TEXT NOT NULL,
+    district     TEXT NOT NULL,   -- '*' = all of AP & Telangana
+    expected     REAL NOT NULL,
+    low          INTEGER NOT NULL,
+    high         INTEGER NOT NULL,
+    evidence     TEXT,
+    window_start TEXT NOT NULL,   -- first day predicted (made_on + 1)
+    window_end   TEXT NOT NULL,   -- last day predicted (made_on + 7)
+    PRIMARY KEY (made_on, category, district)
+);
 """
 
 
@@ -92,3 +104,25 @@ class Store:
             it.areas = json.loads(r[15] or "[]") if len(r) > 15 else []
             out.append(it)
         return out
+
+
+    # -- prediction track record ---------------------------------------------
+    def log_predictions(self, made_on, rows):
+        """rows: dicts with category, district, expected, low, high, evidence. First run of the day wins."""
+        from datetime import timedelta as _td
+        for r in rows:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO predictions_log VALUES (?,?,?,?,?,?,?,?,?)",
+                (made_on.isoformat(), r["category"], r["district"], round(r["expected"], 2), r["low"], r["high"],
+                 r.get("evidence", ""), (made_on + _td(days=1)).isoformat(), (made_on + _td(days=7)).isoformat()))
+        self.conn.commit()
+
+    def due_predictions(self, today):
+        """Predictions whose 7-day window has fully ended."""
+        return self.conn.execute(
+            "SELECT made_on, category, district, expected, low, high, evidence, window_start, window_end "
+            "FROM predictions_log WHERE window_end < ? ORDER BY made_on", (today.isoformat(),)).fetchall()
+
+    def first_prediction_day(self):
+        row = self.conn.execute("SELECT MIN(made_on) FROM predictions_log").fetchone()
+        return row[0] if row else None

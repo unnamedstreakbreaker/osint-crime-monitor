@@ -37,7 +37,9 @@ details.dt table{margin-top:6px}
 TIP_JS = """
 (function(){const t=document.createElement('div');t.id='viztip';document.body.appendChild(t);
 document.addEventListener('mousemove',e=>{const el=e.target.closest('[data-tip]');
-if(!el){t.style.opacity=0;return}t.textContent=el.dataset.tip;t.style.opacity=1;
+if(!el){t.style.opacity=0;return}
+const host=el.closest('dialog')||document.body;if(t.parentNode!==host)host.appendChild(t);
+t.textContent=el.dataset.tip;t.style.opacity=1;
 const x=Math.min(e.clientX+14,innerWidth-t.offsetWidth-8);t.style.left=x+'px';t.style.top=(e.clientY+14)+'px';});})();
 """
 

@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 from . import charts
 from .config import DISPLAY_TZ, REFRESH_URL, REPO
 from .fetcher import NewsItem
-from .explain import predictions
+from .explain import predictions, EVIDENCE_RULE
+from . import config
+from urllib.parse import urlparse, parse_qs
 
 try:
     from zoneinfo import ZoneInfo
@@ -95,6 +97,21 @@ button{font:inherit;color:inherit}
 .howto{background:var(--brass-soft);border:1px solid #e6d6ad;border-radius:10px;padding:12px 16px;font-size:14.5px;margin-bottom:16px}
 .howto p{margin:0 0 4px}.howto p:last-child{margin:0}
 @media(max-width:800px){.preds{grid-template-columns:1fr}}
+
+.grade{display:inline-block;font-size:12.5px;font-weight:600;border-radius:999px;padding:2px 10px;margin-top:6px}
+.g-Strong{background:#dff3e4;color:#0b5a26}.g-Moderate{background:#e5eefb;color:#1d4f91}.g-Limited{background:#eceef1;color:#55606f}
+.evline{font-size:13.5px;color:var(--ink2)}
+.ev summary{cursor:pointer;font-weight:600;color:var(--navy)}
+.ev a em{font-style:normal;color:var(--ink2)}
+.record{background:#fff;border:1px solid var(--line);border-left:5px solid var(--navy);border-radius:10px;padding:12px 16px;margin-bottom:12px}
+.record b.big{font:600 26px/1 var(--display);color:var(--navy);margin-right:6px}
+.record p{margin:4px 0 0;font-size:14.5px}
+.hit{color:#0b5a26;font-weight:600}.miss{color:#b3261e;font-weight:600}
+details.method{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin-bottom:16px;font-size:14.5px}
+details.method summary{cursor:pointer;font-weight:600;color:var(--navy)}
+details.method h5{margin:12px 0 4px;font-size:14.5px}
+details.method ul,details.method ol{margin:0;padding-left:20px}
+details.early{margin-top:8px}details.early>summary{cursor:pointer;font:600 18px var(--display);color:var(--ink2)}
 
 /* tile grid */
 main{max-width:1240px;margin:0 auto;padding:26px 32px 50px}
@@ -235,17 +252,57 @@ def _bars(rows, value, label=lambda r: r["key"], fmt=lambda v: f"{v:.0f}") -> st
 
 
 def _pred_card(p) -> str:
-    arrow = {"up": '<span class="up">▲ rising</span>', "down": '<span class="down">▼ easing</span>'}.get(p["direction"], "")
-    ev = "".join(f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{e(x["title"][:120])} '
-                 f'<span>({e(x["place"])}, {e(x["source"])}, {x["when"]})</span></a>' for x in p["evidence"])
+    arrow = {"up": ' <span class="up">▲ rising</span>', "down": ' <span class="down">▼ easing</span>'}.get(p["direction"], "")
+    chance = (f'<div class="chance"><s><b style="width:{p["chance"] * 100:.0f}%"></b></s>'
+              f'At least one: {e(p["chance_text"])}{arrow}</div>') if p["show_chance"] else (f'<div class="evline">{arrow}</div>' if arrow else "")
+    ev = "".join(
+        f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{e(x["title"][:120])} '
+        f'<span>({e(x["place"])}, {e(x["source"])}, {x["when"]})</span>'
+        + (f' <em>also {e(", ".join(x["also"][:3]))}</em>' if x["also"] else "") + "</a>" for x in p["evidence"])
     return f"""<article class="pred">
-<div class="pred-top"><div><h4>{e(p["headline"])}</h4><p class="what">{e(p["what"])}</p></div>
+<div class="pred-top"><div><h4>{e(p["headline"])}</h4><p class="what">{e(p["what"])}</p>
+<span class="grade g-{p["evidence_grade"]}">Evidence: {p["evidence_grade"]}</span></div>
 <div class="count">~{p["expected"]:.0f}<small>expected next 7 days<br>likely {p["low"]}–{p["high"]}</small></div></div>
-<div class="chance"><s><b style="width:{p["chance"] * 100:.0f}%"></b></s>At least one: {e(p["chance_text"])} {arrow}</div>
+<div class="evline">Based on {e(p["evidence_text"])}.</div>
+{chance}
 <dl><dt>Why</dt><dd><ul>{"".join(f"<li>{e(w)}</li>" for w in p["why"])}</ul></dd>
 <dt>Where</dt><dd>{e(p["where"])}</dd></dl>
-{f'<div class="ev"><b>Reports this is based on</b>{ev}</div>' if ev else ''}
+{f'<details class="ev"><summary>All {len(p["evidence"])} incident{"s" if len(p["evidence"]) != 1 else ""} this is based on</summary>{ev}</details>' if ev else ''}
 </article>"""
+
+
+def _sources_list() -> str:
+    out = []
+    for name, url in config.FEEDS.items():
+        if "news.google.com" in url:
+            q = parse_qs(urlparse(url).query).get("q", [""])[0]
+            out.append(f"Google News search: “{e(q)}”")
+        elif "thehindu" in url:
+            sec = url.split("/news/")[1].split("/feeder")[0].split("/")[-1].replace("-", " ").title()
+            out.append(f"The Hindu, {e(sec)} section")
+        else:
+            out.append(e(name))
+    return "".join(f"<li>{x}</li>" for x in out)
+
+
+def _record_html(r, conf) -> str:
+    if not r or r["n"] == 0:
+        fc = r["first_check"] if r else None
+        when = f"{fc.day} {fc:%b}" if fc else "one week after the first prediction"
+        return (f'<div class="record"><b>Track record: starts {when}.</b>'
+                f'<p>Every day, every prediction (not only the ones shown here) is saved before the week happens. '
+                f'From {when}, each one is checked against the incidents actually reported, and the hit rate appears here, good or bad.</p></div>')
+    pct = r["hits"] / r["n"] * 100
+    grades = ", ".join(f'{g}: {v["hits"]} of {v["n"]}' for g, v in r["by_grade"].items())
+    rows = "".join(
+        f'<tr><td>{x["made_on"]}</td><td>{e(x["category"])} in {e(x["district"])}</td><td>{x["evidence"]}</td>'
+        f'<td class=num>~{x["expected"]:.0f} ({x["low"]}–{x["high"]})</td><td class=num>{x["actual"]}</td>'
+        f'<td class="{"hit" if x["hit"] else "miss"}">{"Inside range" if x["hit"] else "Outside range"}</td></tr>'
+        for x in r["recent"])
+    return (f'<div class="record"><b class="big">{r["hits"]} of {r["n"]}</b> past predictions ({pct:.0f}%) landed inside their stated range.'
+            f'<p>By evidence grade: {e(grades)}. A well-calibrated range should be right about 80% of the time.</p>'
+            f'<details class="dt"><summary>Show the latest checked predictions</summary><table><tr><th>Made on</th><th>Prediction</th>'
+            f'<th>Evidence</th><th class=num>Predicted</th><th class=num>Actual</th><th>Result</th></tr>{rows}</table></details></div>')
 
 
 def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
@@ -408,7 +465,7 @@ setInterval(async () => { if (!polling && await latest() > CFG.generatedAt) loca
 
 
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
-           emerging, now: datetime, hours: int, demo: bool, outlook=None) -> str:
+           emerging, now: datetime, hours: int, demo: bool, outlook=None, record=None) -> str:
     week_start = now - timedelta(days=7)
     incidents = [cl for cl in clusters.values()
                  if cl[0].categories and cl[0].published >= week_start]
@@ -484,16 +541,34 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
 {charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
 <details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
 <h3>By category, last 14 days and next 7</h3><div class="sm">{small or '<p class="meta">Not enough data yet.</p>'}</div>"""
-        preds = predictions(outlook, 6)
+        allp = predictions(outlook, 12)
+        solid = [p for p in allp if p["evidence_grade"] != "Limited"][:6]
+        early = [p for p in allp if p["evidence_grade"] == "Limited"][:6]
         vz_preds = predictions(outlook, 4, "Visakhapatnam")
-        watch_body = (f"""<div class="howto"><p><b>How to read this.</b> Each card is a crime type in a district that is likely to be
-reported again in the next 7 days. <b>What</b> says what kind of incident, <b>Why</b> gives the evidence from recent news,
-and <b>Where</b> lists the localities named in those reports. Open the reports at the bottom of each card to check.</p>
-<p>Confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} day{'s' if outlook.n_reliable != 1 else ''} of monitoring).
-These are estimates of news-reported incidents from public sources, not intelligence on specific people or plans.</p></div>"""
-                      + "<h3>Most likely next week</h3>"
-                      + (f'<div class="preds">{"".join(_pred_card(p) for p in preds)}</div>' if preds
-                         else "<p class='meta'>Not enough district-level history yet.</p>")
+        watch_body = (_record_html(record, outlook.conf)
+                      + f"""<details class="method"><summary>Method, sources and limits</summary>
+<h5>What is predicted</h5><p>How many incidents of a crime type will be <b>reported in the news</b> from a district in the next 7 days.
+Not specific crimes, people or places.</p>
+<h5>Sources</h5><ul>{_sources_list()}</ul>
+<h5>Method</h5><ol>
+<li>Stories are collected every hour, tagged by crime type and place with fixed keyword rules (published in the code), and duplicates of the same incident across outlets are merged.</li>
+<li>For each crime type and district: the recent daily rate (newer days weigh more), pulled toward the district's long-run share while history is short.</li>
+<li>Expected = daily rate x 7 (x trend once 10+ days exist). Range = the 80% band of a Poisson count with that expectation.</li>
+<li>Evidence grade: {e(EVIDENCE_RULE)}</li>
+<li>Every prediction is saved daily and scored a week later (track record above).</li>
+<li>The chance of at least one incident is shown only once monitoring passes 7 days and the evidence is Moderate or Strong.</li></ol>
+<h5>Limits</h5><ul>
+<li>Only what the press reports. Unreported or under-reported crime is invisible here.</li>
+<li>The place is where the story says it happened or was announced (e.g. surrenders announced at the DGP office in Hyderabad).</li>
+<li>Monitoring started {outlook.reliable_from + timedelta(days=2):%d %b %Y}; confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} days). Medium from 7 days, High from 21.</li></ul>
+<h5>How to verify</h5><p>Each card lists every incident it is based on, with links to the original reports and other outlets that covered it.</p>
+</details>"""
+                      + "<h3>Predictions with Strong or Moderate evidence</h3>"
+                      + (f'<div class="preds">{"".join(_pred_card(p) for p in solid)}</div>' if solid
+                         else "<p class='meta'>None yet. Predictions need at least 3 incidents from 2 different outlets.</p>")
+                      + (f'<details class="early"><summary>Early signals with limited evidence ({len(early)})</summary>'
+                         f'<p class="meta">Fewer than 3 incidents or only one outlet. Worth watching, not acting on.</p>'
+                         f'<div class="preds">{"".join(_pred_card(p) for p in early)}</div></details>' if early else "")
                       + "<h3>Vizag</h3>"
                       + (f'<div class="preds">{"".join(_pred_card(p) for p in vz_preds)}</div>' if vz_preds
                          else "<p class='meta'>No Vizag incidents in the last 30 days to base a prediction on.</p>")
@@ -517,8 +592,8 @@ These are estimates of news-reported incidents from public sources, not intellig
         t_watch = _tile("watch", "target", "Predictions",
                         ('<ul class="heads">' + "".join(
                             f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p["category"].lower())}</b> in {e(p["district"])}'
-                            f'<span>{e(("around " + ", ".join(p["places"][:2])) if p["places"] else p["chance_text"])}</span></div></li>'
-                            for p in tp) + "</ul><p>Expected next 7 days. Open for what, why and where.</p>")
+                            f'<span>Evidence: {p["evidence_grade"]}{(", around " + ", ".join(p["places"][:2])) if p["places"] else ""}</span></div></li>'
+                            for p in tp) + "</ul><p>Expected next 7 days. Open for the evidence, why and where.</p>")
                         if tp else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
         ar = outlook.area_rows(top=4)
         t_areas = _tile("areas", "grid", "Vizag areas",
