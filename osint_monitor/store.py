@@ -30,6 +30,10 @@ CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
 """
 
 
+def _source_label(src: str) -> str:
+    return "The Hindu" if src.startswith("thehindu") else src
+
+
 class Store:
     def __init__(self, path: str):
         self.conn = sqlite3.connect(path)
@@ -76,7 +80,7 @@ class Store:
         out = []
         for r in rows:
             it = NewsItem(title=strip_source(r[1], r[5] or ""), link=r[2], summary=r[3],
-                          published=datetime.fromisoformat(r[4]), source=r[5],
+                          published=datetime.fromisoformat(r[4]), source=_source_label(r[5] or ""),
                           feed=r[6], item_id=r[0])
             it.categories = json.loads(r[7] or "[]")
             it.state = r[8] or ""

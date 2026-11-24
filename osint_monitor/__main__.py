@@ -13,9 +13,10 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from . import analysis, config, report
-from .classifier import classify, enrich_with_llm
+from .classifier import classify, enrich_with_llm, locate
 from .demo import sample_items
 from .forecast import Outlook
+from .explain import predictions
 from .fetcher import fetch_all
 from .store import Store
 
@@ -59,6 +60,12 @@ def main(argv=None) -> int:
     print(f"  {new} new items stored")
 
     items = store.since(now - timedelta(days=14))
+    # re-apply the current rules to history so keyword fixes take effect retroactively
+    for it in items:
+        if use_llm and it.llm_summary:
+            locate(it)
+        else:
+            classify(it)
     clusters = analysis.cluster(items)
     store.upsert(items)  # persist cluster ids
 
@@ -97,7 +104,9 @@ def main(argv=None) -> int:
                    "reliable_days": outlook.n_reliable,
                    "total": _rows([{"key": "All incidents", **outlook.project(outlook.total)}])[0],
                    "categories": _rows(outlook.category_rows()), "districts": _rows(outlook.district_rows()),
-                   "vizag_areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist())},
+                   "vizag_areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist()),
+                   "predictions": predictions(outlook, 8),
+                   "vizag_predictions": predictions(outlook, 6, "Visakhapatnam")},
                   fh, indent=2, ensure_ascii=False)
     with open(os.path.join(os.path.dirname(out) or ".", "status.json"), "w") as fh:
         json.dump({"generated_at": int(now.timestamp()), "items": len(items)}, fh)

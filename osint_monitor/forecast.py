@@ -53,6 +53,8 @@ class Outlook:
     def __init__(self, clusters: dict[str, list[NewsItem]], tracking_start: date,
                  today: date, tz, history_days: int = 30):
         self.today = today
+        self.tz = tz
+        self.members = defaultdict(list)      # (category, district) -> lead items, newest first
         self.days = [today - timedelta(days=i) for i in range(history_days - 1, -1, -1)]
         self.reliable_from = tracking_start - timedelta(days=FEED_LOOKBACK_DAYS)
         self.reliable_days = [d for d in self.days if d >= self.reliable_from]
@@ -77,8 +79,12 @@ class Outlook:
             for dist in lead.districts:
                 self.by_district[dist][d] += 1
                 self.by_cat_district[(lead.categories[0], dist)][d] += 1
+                self.members[(lead.categories[0], dist)].append(lead)
             for a in lead.areas:
                 self.by_area[a][d] += 1
+
+        for v in self.members.values():
+            v.sort(key=lambda i: i.published, reverse=True)
 
     # -- core model ---------------------------------------------------------
     def _ewma(self, series, num=0.0, den=0.0) -> float:

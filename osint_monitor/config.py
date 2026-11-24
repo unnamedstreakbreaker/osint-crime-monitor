@@ -78,11 +78,18 @@ DISTRICTS = {
         "Amaravati": ["amaravati"],
     },
     "Telangana": {
-        "Hyderabad": ["hyderabad", "secunderabad", "old city", "banjara hills", "jubilee hills", "begumpet", "charminar"],
-        "Cyberabad": ["cyberabad", "gachibowli", "madhapur", "kukatpally"],
-        "Rachakonda": ["rachakonda", "lb nagar", "uppal"],
+        "Hyderabad": ["hyderabad", "secunderabad", "old city", "banjara hills", "jubilee hills", "begumpet", "charminar",
+                      "ameerpet", "balkampet", "sr nagar", "panjagutta", "khairatabad", "abids", "nampally", "mehdipatnam",
+                      "tolichowki", "golconda", "falaknuma", "chandrayangutta", "malakpet", "musheerabad", "chikkadpally",
+                      "himayatnagar", "narayanguda", "amberpet", "tarnaka", "marredpally", "bowenpally", "shivla nagar",
+                      "langar houz", "asif nagar", "santosh nagar", "chaderghat", "afzalgunj", "koti", "film nagar"],
+        "Cyberabad": ["cyberabad", "gachibowli", "madhapur", "kukatpally", "kondapur", "miyapur", "hafeezpet",
+                      "chandanagar", "kphb", "hitec city", "hitech city", "raidurg", "manikonda", "nanakramguda",
+                      "financial district", "kokapet", "bachupally", "nizampet", "kollur"],
+        "Rachakonda": ["rachakonda", "lb nagar", "uppal", "dilsukhnagar", "saroornagar", "vanasthalipuram", "hayathnagar",
+                       "nacharam", "boduppal", "chaitanyapuri", "meerpet", "pahadi shareef", "ghatkesar", "kushaiguda"],
         "Rangareddy": ["rangareddy", "ranga reddy", "shamshabad", "himayatsagar", "rajendranagar", "narsingi", "shadnagar"],
-        "Medchal-Malkajgiri": ["medchal", "malkajgiri"],
+        "Medchal-Malkajgiri": ["medchal", "malkajgiri", "jeedimetla", "alwal", "kompally", "dundigal", "shamirpet", "quthbullapur"],
         "Sangareddy": ["sangareddy", "patancheru"],
         "Warangal": ["warangal", "hanamkonda", "kazipet"],
         "Karimnagar": ["karimnagar"],
@@ -168,7 +175,7 @@ CATEGORIES = {
     "Narcotics": {
         "ganja": 2, "narcotic": 2, "ndps": 2, "mdma": 3, "heroin": 3,
         "cocaine": 3, "drug peddler": 2, "drugs seized": 2, "hash oil": 2,
-        "eagle": 1, "drug racket": 3, "opium": 2,
+        "eagle": 1, "drug racket": 3, "opium": 2, "ganja trafficking": 3, "drug trafficking": 3, "pd act": 1,
     },
     "Left-wing extremism": {
         "maoist": 3, "naxal": 3, "exchange of fire": 3, "ied": 3,
@@ -178,6 +185,7 @@ CATEGORIES = {
         "clash": 2, "riot": 3, "stone pelting": 3, "communal": 3,
         "protest": 1, "bandh": 2, "dharna": 1, "section 163": 2,
         "prohibitory orders": 2, "lathi charge": 2, "mob": 2, "tension": 1,
+        "bomb threat": 3, "hoax": 2, "threat email": 2,
     },
     "Violent crime": {
         "murder": 3, "murdered": 3, "killed": 2, "stabbed": 2, "attack": 1,
@@ -186,7 +194,7 @@ CATEGORIES = {
     },
     "Crimes against women & children": {
         "pocso": 3, "sexual assault": 3, "rape": 3, "dowry": 2, "sexual harassment": 3, "harassed woman": 2,
-        "stalking": 2, "acid attack": 3, "child marriage": 2, "trafficking": 3,
+        "stalking": 2, "acid attack": 3, "child marriage": 2, "human trafficking": 3, "girls rescued": 2, "women rescued": 2,
         "she teams": 1, "eve teasing": 2,
     },
     "Smuggling & illegal trade": {

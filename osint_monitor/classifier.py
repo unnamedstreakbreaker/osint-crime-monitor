@@ -29,6 +29,16 @@ _AREA_PATTERNS = {
     for district, spec in config.SUB_AREAS.items()
 }
 _DISTRICT_STATE = {d: s for s, dm in config.DISTRICTS.items() for d in dm}
+_FIX = {"Lb Nagar": "LB Nagar", "Pm Palem": "PM Palem", "Nad Junction": "NAD Junction", "Asr District": ""}
+# Locality names: district aliases that name a place inside the district
+_PLACE_PATTERNS = [
+    (district, _FIX.get(alias.title(), alias.title()), pat)
+    for dists in config.DISTRICTS.values() for district, aliases in dists.items()
+    for alias, pat in _compile(aliases).items()
+    if alias not in district.lower() and "district" not in alias and len(alias) > 3
+    and alias not in ("cyberabad", "rachakonda", "kphb")
+    and alias.title() not in ("Vizag", "Vishakhapatnam", "Anantapuramu", "Mahbubnagar", "Ranga Reddy", "Rajahmundry")
+]
 _STATE_PATTERNS = {s: list(_compile(a).values()) for s, a in config.STATE_ALIASES.items()}
 
 
@@ -74,6 +84,7 @@ def classify(item: NewsItem) -> NewsItem:
     states.discard("")
     item.areas = areas
     item.districts = districts
+    locate(item, text)
     item.state = " / ".join(sorted(states)) if states else "Other/National"
 
     # Severity 1-5: strongest single signal (1-3), +1 for corroborating terms,
@@ -138,4 +149,18 @@ def enrich_with_llm(item: NewsItem) -> NewsItem:
             item.severity = max(0, min(5, parsed["severity"]))
     except Exception as exc:
         print(f"  [llm]  skipped '{item.title[:50]}…': {exc}")
+    return item
+
+
+def locate(item: NewsItem, text: str | None = None) -> NewsItem:
+    """Fill item.places with the localities a story names, e.g. ("Cyberabad", "Gachibowli")."""
+    text = text or " " + item.text.lower() + " "
+    places = [(d, label) for d, label, pat in _PLACE_PATTERNS if label and pat.search(text)]
+    places += [(d, a) for d in config.SUB_AREAS for a in item.areas if d in item.districts]
+    seen, out = set(), []
+    for pl in places:
+        if pl not in seen:
+            seen.add(pl)
+            out.append(pl)
+    item.places = out
     return item

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from . import charts
 from .config import DISPLAY_TZ, REFRESH_URL, REPO
 from .fetcher import NewsItem
+from .explain import predictions
 
 try:
     from zoneinfo import ZoneInfo
@@ -73,6 +74,27 @@ button{font:inherit;color:inherit}
 .counter span{color:#b9c3d3;font-size:14px}
 .counter.alert b{color:#ffb4a8}
 .banner{background:#fff4e5;color:#7a4b00;font-size:14px;padding:8px 32px;text-align:center}
+
+/* prediction cards */
+.preds{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.pred{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.pred-top{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+.pred h4{margin:0;font:600 22px/1.15 var(--display)}
+.pred .what{margin:2px 0 0;color:var(--ink2);font-size:14.5px}
+.pred .count{text-align:right;font:600 34px/1 var(--display);color:var(--navy)}
+.pred .count small{display:block;font:400 12.5px var(--body);color:var(--ink2);margin-top:3px}
+.chance{display:flex;align-items:center;gap:8px;font-size:14px}
+.chance s{flex:1;max-width:220px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;text-decoration:none}
+.chance s b{display:block;height:100%;background:#2a78d6;border-radius:4px}
+.pred dl{margin:0;display:grid;grid-template-columns:62px 1fr;gap:6px 10px;font-size:14.5px}
+.pred dt{font-weight:600;color:var(--navy)}.pred dd{margin:0}
+.pred ul{margin:0;padding-left:18px}.pred li{margin:2px 0}
+.ev{border-top:1px solid #e8ecf1;padding-top:8px;font-size:13.5px}
+.ev a{display:block;color:var(--ink);text-decoration:none;padding:3px 0}.ev a:hover{text-decoration:underline}
+.ev a span{color:var(--ink2)}
+.howto{background:var(--brass-soft);border:1px solid #e6d6ad;border-radius:10px;padding:12px 16px;font-size:14.5px;margin-bottom:16px}
+.howto p{margin:0 0 4px}.howto p:last-child{margin:0}
+@media(max-width:800px){.preds{grid-template-columns:1fr}}
 
 /* tile grid */
 main{max-width:1240px;margin:0 auto;padding:26px 32px 50px}
@@ -210,6 +232,20 @@ def _bars(rows, value, label=lambda r: r["key"], fmt=lambda v: f"{v:.0f}") -> st
     return '<div class="bars">' + "".join(
         f'<div><em>{e(_name(label(r)))}</em><s><b style="width:{value(r) / top * 100:.0f}%"></b></s>'
         f'<code>{fmt(value(r))}</code></div>' for r in rows) + "</div>"
+
+
+def _pred_card(p) -> str:
+    arrow = {"up": '<span class="up">▲ rising</span>', "down": '<span class="down">▼ easing</span>'}.get(p["direction"], "")
+    ev = "".join(f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{e(x["title"][:120])} '
+                 f'<span>({e(x["place"])}, {e(x["source"])}, {x["when"]})</span></a>' for x in p["evidence"])
+    return f"""<article class="pred">
+<div class="pred-top"><div><h4>{e(p["headline"])}</h4><p class="what">{e(p["what"])}</p></div>
+<div class="count">~{p["expected"]:.0f}<small>expected next 7 days<br>likely {p["low"]}–{p["high"]}</small></div></div>
+<div class="chance"><s><b style="width:{p["chance"] * 100:.0f}%"></b></s>At least one: {e(p["chance_text"])} {arrow}</div>
+<dl><dt>Why</dt><dd><ul>{"".join(f"<li>{e(w)}</li>" for w in p["why"])}</ul></dd>
+<dt>Where</dt><dd>{e(p["where"])}</dd></dl>
+{f'<div class="ev"><b>Reports this is based on</b>{ev}</div>' if ev else ''}
+</article>"""
 
 
 def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
@@ -448,8 +484,21 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
 {charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
 <details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
 <h3>By category, last 14 days and next 7</h3><div class="sm">{small or '<p class="meta">Not enough data yet.</p>'}</div>"""
-        watch_body = ("<p class='meta' style='margin-top:0'>Crime type and district combinations most likely to appear in the news next week.</p>"
-                      + _outlook_table(outlook.watchlist(top=12), "Category in district", "Not enough district-level history yet.")
+        preds = predictions(outlook, 6)
+        vz_preds = predictions(outlook, 4, "Visakhapatnam")
+        watch_body = (f"""<div class="howto"><p><b>How to read this.</b> Each card is a crime type in a district that is likely to be
+reported again in the next 7 days. <b>What</b> says what kind of incident, <b>Why</b> gives the evidence from recent news,
+and <b>Where</b> lists the localities named in those reports. Open the reports at the bottom of each card to check.</p>
+<p>Confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} day{'s' if outlook.n_reliable != 1 else ''} of monitoring).
+These are estimates of news-reported incidents from public sources, not intelligence on specific people or plans.</p></div>"""
+                      + "<h3>Most likely next week</h3>"
+                      + (f'<div class="preds">{"".join(_pred_card(p) for p in preds)}</div>' if preds
+                         else "<p class='meta'>Not enough district-level history yet.</p>")
+                      + "<h3>Vizag</h3>"
+                      + (f'<div class="preds">{"".join(_pred_card(p) for p in vz_preds)}</div>' if vz_preds
+                         else "<p class='meta'>No Vizag incidents in the last 30 days to base a prediction on.</p>")
+                      + "<h3>All combinations at a glance</h3>"
+                      + _outlook_table(outlook.watchlist(top=15), "Category in district", "Not enough district-level history yet.")
                       + "<h3>District outlook</h3>"
                       + _outlook_table(outlook.district_rows(top=15), "District / Commissionerate", "Not enough history yet."))
         areas_body = _outlook_table(outlook.area_rows(top=20), "Vizag area",
@@ -464,10 +513,13 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
 <div class="chartwrap">{charts.daily_chart(mini_hist, outlook.forecast_days(), width=560, height=290)}</div>
 <div class="catstrip">{"".join(f'<div><b>~{r["expected"]:.0f}</b>{e(r["key"])} next week</div>' for r in outlook.category_rows(top=3))}</div>""",
                          "t-trends", "Open charts")
-        wl = outlook.watchlist(top=4)
-        t_watch = _tile("watch", "target", "Watchlist",
-                        _bars(wl, lambda r: r["p_any"] * 100, fmt=lambda v: f"{v:.0f}%") + "<p>Chance of at least one incident next week</p>"
-                        if wl else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
+        tp = predictions(outlook, 3)
+        t_watch = _tile("watch", "target", "Predictions",
+                        ('<ul class="heads">' + "".join(
+                            f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p["category"].lower())}</b> in {e(p["district"])}'
+                            f'<span>{e(("around " + ", ".join(p["places"][:2])) if p["places"] else p["chance_text"])}</span></div></li>'
+                            for p in tp) + "</ul><p>Expected next 7 days. Open for what, why and where.</p>")
+                        if tp else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
         ar = outlook.area_rows(top=4)
         t_areas = _tile("areas", "grid", "Vizag areas",
                         _bars(ar, lambda r: r["last7"] or r["expected"], fmt=lambda v: f"{v:.0f}") + "<p>Incidents in the last 7 days</p>"
@@ -513,7 +565,7 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
     dialogs = "".join([
         _dialog("incidents", "list", "Incidents", "Deduplicated, highest severity first. Filters are saved in the page link.", incidents_body),
         _dialog("trends", "pulse", "Trends and 7-day outlook", "Incidents per day and what to expect next week", trends_body) if outlook else "",
-        _dialog("watch", "target", "Watchlist", "Where incidents are most likely next week", watch_body) if outlook else "",
+        _dialog("watch", "target", "Predictions", "What is likely next week, why, and where", watch_body) if outlook else "",
         _dialog("areas", "grid", "Vizag areas outlook", "Locality-level incidents and next-week outlook", areas_body) if outlook else "",
         _dialog("districts", "eye", "District hotspots", "Last 7 days", districts_body),
         _dialog("weekly", "swap", "Weekly changes", "This week against last week", weekly_body),

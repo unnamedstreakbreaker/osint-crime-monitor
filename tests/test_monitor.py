@@ -151,3 +151,21 @@ class ForecastTests(unittest.TestCase):
         kurnool = next(r for r in o.district_rows(top=20) if r["key"] == "Kurnool")
         self.assertLess(kurnool["p_any"], 0.9)
         self.assertEqual(o.conf, "Low")
+
+
+class ExplainTests(unittest.TestCase):
+    def test_prediction_has_what_why_where(self):
+        from datetime import timezone as tz
+        from osint_monitor.forecast import Outlook
+        from osint_monitor.explain import predictions
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        titles = ["Gajuwaka man loses Rs {} lakh in digital arrest scam",
+                  "MVP Colony retiree loses Rs {} lakh to digital arrest fraudsters in Visakhapatnam"]
+        items = [classify(item(titles[k % 2].format(k + 5), 6 + k * 20, now=now)) for k in range(6)]
+        o = Outlook({i.item_id: [i] for i in items}, (now - timedelta(days=3)).date(), now.date(), tz.utc)
+        [p] = predictions(o, 1, "Visakhapatnam")
+        self.assertEqual(p["headline"], "Cyber fraud in Visakhapatnam")
+        self.assertIn("digital arrest", p["what"])
+        self.assertIn("Gajuwaka", p["where"]); self.assertIn("MVP Colony", p["where"])
+        self.assertTrue(any("last 7 days" in w for w in p["why"]))
+        self.assertEqual(len(p["evidence"]), 3)

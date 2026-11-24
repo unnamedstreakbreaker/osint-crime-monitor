@@ -29,6 +29,7 @@ class NewsItem:
     state: str = ""
     districts: list[str] = field(default_factory=list)
     areas: list[str] = field(default_factory=list)
+    places: list[tuple[str, str]] = field(default_factory=list)   # (district, locality named in the story)
     severity: int = 0
     matched_terms: list[str] = field(default_factory=list)
     llm_summary: str = ""
@@ -103,7 +104,7 @@ def parse_feed(xml_bytes: bytes, feed_name: str) -> list[NewsItem]:
             link=fields.get("link", ""),
             summary=clean(fields.get("description") or fields.get("summary") or fields.get("content")),
             published=_parse_date(fields.get("pubDate") or fields.get("published") or fields.get("updated")),
-            source=source or feed_name,
+            source=source or ("The Hindu" if feed_name.startswith("thehindu") else feed_name),
             feed=feed_name,
         ))
     return items
