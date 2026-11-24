@@ -69,6 +69,7 @@ html[lang=te] body{line-height:1.6}html[lang=te] .glance{grid-template-columns:1
 .install{display:inline-flex;align-items:center;gap:6px;background:var(--brass);color:var(--navy);border:0;border-radius:999px;
  padding:7px 14px;font-weight:600;font-size:14.5px;cursor:pointer}
 .install[hidden]{display:none}
+.ago{white-space:nowrap}.ago.stale{color:#ffcf7a;font-weight:600}
 .offline{display:flex;align-items:center;justify-content:center;gap:8px;background:#fff4e5;color:#7a4b00;font-size:14px;padding:8px 16px}
 .offline[hidden]{display:none}
 .ioshint{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;gap:10px;
@@ -561,6 +562,20 @@ def locals_for_render(ns):
                                "outlook", "record", "city_key")}
 
 
+_AGO_JS = r"""
+// ---- freshness: "(25 min ago)", amber when older than 2 hours -----------------
+function ago() {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - CFG.generatedAt) / 60)), te = CFG.lang === 'te';
+  const h = Math.floor(m / 60), txt = m < 60 ? (te ? `${m} నిమిషాల క్రితం` : `${m} min ago`)
+    : (te ? `${h} గంటల ${m % 60} నిమిషాల క్రితం` : `${h} h ${m % 60} min ago`);
+  const el = $('#ago'); if (!el) return;
+  el.textContent = '(' + txt + ')'; el.classList.toggle('stale', m > 120);
+  el.title = m > 120 ? (te ? 'డేటా 2 గంటల కంటే పాతది; తదుపరి అప్‌డేట్ కోసం వేచి ఉంది' : 'Data is over 2 hours old; waiting for the next update') : '';
+}
+ago(); setInterval(ago, 60000);
+"""
+
+
 _PWA_JS = r"""
 // ---- app (PWA): offline support, install button, iPhone hint ----------------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -803,7 +818,7 @@ Not specific crimes, people or places.</p>
     cfg = json.dumps({
         "actionsUrl": f"https://github.com/{REPO}/actions/workflows/hourly.yml",
         "generatedAt": int(now.timestamp()),
-        "defaultWin": hours, "core": core,
+        "defaultWin": hours, "core": core, "lang": _LANG,
     })
     spike_n = sum(1 for t in trends if t["spike"])
 
@@ -822,8 +837,8 @@ Not specific crimes, people or places.</p>
 <style>{CSS}</style></head><body>
 <header class="board"><div class="board-in">
 <div class="top"><div class="emblem">{icon("eye", 24)}</div>
-<div class="title"><h1>{e(cname)} crime and threat board</h1><p>{L(f"Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.",
- f"{e(region_text)}లో నమోదైన ఘటనలు, బహిరంగ వార్తల ఆధారంగా. చివరి అప్‌డేట్ {local(now):%d %b %Y, %H:%M} IST; ప్రతి గంటకు.")}</p></div>
+<div class="title"><h1>{e(cname)} crime and threat board</h1><p>{L(f"Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST <span class=ago id=ago></span>, every hour.",
+ f"{e(region_text)}లో నమోదైన ఘటనలు, బహిరంగ వార్తల ఆధారంగా. చివరి అప్‌డేట్ {local(now):%d %b %Y, %H:%M} IST <span class=ago id=ago></span>; ప్రతి గంటకు.")}</p></div>
 <div class="actions"><button class="install" id="install" hidden>{icon("download", 18)}<span>Install app</span></button>
 <nav class="lang" aria-label="Language"><a href="{page_of(city_key, 'en')}" data-lang="en"{' class="on" aria-current="true"' if _LANG == "en" else ''}>English</a><a href="{page_of(city_key, 'te')}" data-lang="te"{' class="on" aria-current="true"' if _LANG == "te" else ''}>తెలుగు</a></nav></div>
 </div>
@@ -844,6 +859,6 @@ Not specific crimes, people or places.</p>
 {f'{spike_n} category spike{"s" if spike_n != 1 else ""} this week. ' if spike_n else ''}Data: <a href="incidents.json">incidents.json</a>, <a href="outlook.json">outlook.json</a></footer>
 <div class="ioshint" id="ioshint" hidden>{icon("share", 20)}<span>Install this app: tap Share, then Add to Home Screen.</span>
 <button class="x2" id="ioshint-x" aria-label="Close">{icon("close", 16)}</button></div>
-<script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}{_PWA_JS}</script>
+<script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}{_AGO_JS}{_PWA_JS}</script>
 <script>{charts.TIP_JS}</script>
 </body></html>"""

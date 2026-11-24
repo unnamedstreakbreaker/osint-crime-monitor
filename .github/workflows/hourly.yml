@@ -2,7 +2,9 @@ name: OSINT crime brief - hourly update + deploy
 
 on:
   schedule:
-    - cron: "17 * * * *"      # every hour (GitHub may delay scheduled runs by a few minutes)
+    # Two attempts an hour: GitHub runs schedules on a best-effort basis and often skips slots
+    # on busy servers, so the second slot keeps the board at least hourly. Runs never overlap.
+    - cron: "7,37 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
