@@ -27,6 +27,8 @@ TERM_LABEL = {
     "ganja trafficking": "ganja trafficking", "voice clone": "AI voice cloning", "ai voice": "AI voice cloning",
     "qr code": "QR codes", "sim swap": "SIM swap", "e-sim": "e-SIM fraud", "betting app": "betting apps",
     "screen sharing": "screen-sharing apps", "fake police": "fake police calls",
+    "house burglary": "house burglaries", "burglary": "burglaries", "theft case": "thefts",
+    "drunk driving": "drunk driving", "hit-and-run": "hit-and-run", "found dead": "unexplained deaths",
 }
 
 CATEGORY_WHAT = {
@@ -36,6 +38,8 @@ CATEGORY_WHAT = {
     "Law and order": "Public-order incidents (clashes, protests, threats)",
     "Violent crime": "Murders, robberies, assaults or kidnappings",
     "Crimes against women & children": "Crimes against women and children",
+    "Property crime": "Thefts, burglaries and recoveries of stolen property",
+    "Road accidents": "Road accidents and traffic deaths",
     "Smuggling & illegal trade": "Smuggling and illegal trade seizures",
     "Advisories & alerts": "Police or government warnings to the public",
 }
@@ -181,11 +185,15 @@ def all_for_log(o) -> list[dict]:
     return rows
 
 
-def track_record(store, o) -> dict:
+def track_record(store, o, districts=None, city=None) -> dict:
     """Score predictions whose 7-day window has ended against what was actually reported."""
     from datetime import date as _date, timedelta as _td
     scored = []
     for made_on, cat, dist, exp, low, high, grade, ws, we in store.due_predictions(o.today):
+        if cat == "*" and dist != (f"city:{city}" if city else "*"):
+            continue
+        if cat != "*" and districts is not None and dist not in districts:
+            continue
         ws, we = _date.fromisoformat(ws), _date.fromisoformat(we)
         if ws < o.days[0]:
             continue  # older than the 30-day window we hold in memory

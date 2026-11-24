@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 from . import charts
-from .config import DISPLAY_TZ, REFRESH_URL, REPO
+from .config import DISPLAY_TZ, REPO
 from .fetcher import NewsItem
 from .explain import predictions, EVIDENCE_RULE
 from . import config
@@ -62,13 +62,15 @@ button{font:inherit;color:inherit}
 .board-in{max-width:1240px;margin:0 auto}
 .top{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .emblem{width:46px;height:46px;border-radius:50%;border:2px solid var(--brass);display:grid;place-items:center;color:var(--brass);flex:none}
+.title{flex:1;min-width:0}
 .title h1{font:600 30px/1.05 var(--display);margin:0;letter-spacing:.2px}
 .title p{margin:2px 0 0;color:#b9c3d3;font-size:14px}
-.actions{margin-left:auto;text-align:right}
-.refresh{display:inline-flex;align-items:center;gap:8px;background:var(--brass);color:var(--navy);border:0;border-radius:8px;
- padding:9px 16px;font-weight:600;cursor:pointer}
-.refresh:hover{background:#c9a24a}.refresh:disabled{opacity:.75;cursor:progress}
-#rstatus{font-size:13px;color:#b9c3d3;margin-top:6px;max-width:380px;margin-left:auto}
+.cities{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.city{display:inline-flex;align-items:baseline;gap:6px;border:1px solid #3a5480;border-radius:999px;padding:6px 14px;
+ color:#dfe6f1;text-decoration:none;font-size:14.5px}
+.city.on{background:var(--brass);border-color:var(--brass);color:var(--navy);font-weight:600}
+a.city:not(.on):hover{border-color:var(--brass)}
+.city.soon{opacity:.6;cursor:not-allowed}.city small{font-size:12px}
 .counters{display:grid;grid-template-columns:repeat(4,1fr);margin-top:22px;border-top:1px solid #2c4369}
 .counter{padding:14px 18px 0 0}
 .counter+.counter{padding-left:18px;border-left:1px solid #2c4369}
@@ -199,7 +201,7 @@ footer{color:var(--ink2);font-size:13px;text-align:center;padding:8px 20px 30px}
  .board{padding:18px 16px 20px}main{padding:18px 16px 40px}
  .tiles{grid-template-columns:1fr}.t-trends,.t-incidents{grid-column:auto;grid-row:auto}
  .counters{grid-template-columns:repeat(2,1fr)}.counter:nth-child(3){border-left:0;padding-left:0}
- .counter b{font-size:36px}.actions{margin-left:0;text-align:left;width:100%}#rstatus{margin-left:0}
+ .counter b{font-size:36px}
  dialog{width:100vw;max-width:100vw;max-height:100dvh;height:100dvh;border-radius:0}.dlg-bd{max-height:calc(100dvh - 70px)}
 }
 """
@@ -358,7 +360,7 @@ function fill(sel, attr, label) {
     uniq(attr).map(([v, n]) => `<option value="${v.replace(/"/g, '&quot;')}">${v} (${n})</option>`).join('');
 }
 fill(F.state, 'state', 'All states'); fill(F.district, 'districts', 'All districts');
-fill(F.area, 'areas', 'All Vizag areas'); fill(F.cat, 'cats', 'All categories');
+fill(F.area, 'areas', 'All localities'); fill(F.cat, 'cats', 'All categories');
 
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
@@ -389,13 +391,13 @@ function apply() {
   });
   $('#shown').textContent = `${shown} of ${cards.length} incidents`;
   $('#empty').classList.toggle('hidden', shown > 0);
-  $('#chip-vizag').classList.toggle('on', F.district.value === 'Visakhapatnam');
+  $('#chip-vizag').classList.toggle('on', F.district.value === CFG.core);
   $('#chip-all').classList.toggle('on', !F.district.value && !F.area.value && !F.state.value && !F.cat.value && !q && F.sev.value === '0');
   writeHash();
 }
 Object.values(F).forEach(el => el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', apply));
-F.area.addEventListener('change', () => { if (F.area.value) F.district.value = 'Visakhapatnam'; apply(); });
-$('#chip-vizag').onclick = () => { F.district.value = F.district.value === 'Visakhapatnam' ? '' : 'Visakhapatnam'; if (!F.district.value) F.area.value = ''; apply(); };
+F.area.addEventListener('change', () => { if (F.area.value) F.district.value = CFG.core; apply(); });
+$('#chip-vizag').onclick = () => { F.district.value = F.district.value === CFG.core ? '' : CFG.core; if (!F.district.value) F.area.value = ''; apply(); };
 $('#chip-all').onclick = () => { ['state', 'district', 'area', 'cat', 'q'].forEach(k => F[k].value = ''); F.sev.value = '0'; apply(); };
 
 // ---- tiles & pop-ups ------------------------------------------------------
@@ -428,51 +430,37 @@ addEventListener('hashchange', () => { const t = readHash(); apply(); if (t && t
 """
 
 
-_REFRESH_JS = r"""
-// ---- refresh -------------------------------------------------------------
-const btn = $('#refresh'), st = $('#rstatus');
-async function latest() {
-  try { const r = await fetch('status.json?t=' + Date.now(), {cache: 'no-store'}); return (await r.json()).generated_at || 0; }
-  catch (e) { return 0; }
-}
-let polling = null;
-function poll(maxMin) {
-  clearInterval(polling);
-  const until = Date.now() + maxMin * 60000;
-  polling = setInterval(async () => {
-    if (await latest() > CFG.generatedAt) { st.textContent = 'New news arrived. Reloading…'; location.reload(); }
-    else if (Date.now() > until) { clearInterval(polling); btn.disabled = false; btn.lastElementChild.textContent = 'Refresh now';
-      st.textContent = 'Still running on GitHub. This page will update on its next check.'; }
-  }, 15000);
-}
-btn.onclick = async () => {
-  btn.disabled = true; btn.lastElementChild.textContent = 'Refreshing…';
-  if (CFG.refreshUrl) {
-    try {
-      const r = await fetch(CFG.refreshUrl, {method: 'POST'});
-      const j = await r.json();
-      st.textContent = j.message || 'Fetching the latest news (about 2–3 minutes)…';
-    } catch (e) { st.textContent = 'Could not reach the refresh service. Try again in a minute.'; btn.disabled = false; btn.lastElementChild.textContent = 'Refresh now'; return; }
-  } else {
-    window.open(CFG.actionsUrl, '_blank', 'noopener');
-    st.textContent = 'On the GitHub page that opened, click "Run workflow". This page reloads by itself when the new news is ready (about 2–3 minutes).';
-  }
-  poll(8);
-};
-// background check every 5 minutes; reload quietly if a newer brief exists
-setInterval(async () => { if (!polling && await latest() > CFG.generatedAt) location.reload(); }, 300000);
+_RELOAD_JS = r"""
+// reload quietly when the hourly job publishes a newer brief (never while a pop-up is open)
+setInterval(async () => {
+  if (document.querySelector('dialog[open]')) return;
+  try {
+    const r = await fetch('status.json?t=' + Date.now(), {cache: 'no-store'});
+    if (((await r.json()).generated_at || 0) > CFG.generatedAt) location.reload();
+  } catch (e) {}
+}, 300000);
 """
 
 
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
-           emerging, now: datetime, hours: int, demo: bool, outlook=None, record=None) -> str:
+           emerging, now: datetime, hours: int, demo: bool, outlook=None, record=None,
+           city_key: str = config.DEFAULT_CITY) -> str:
+    city = config.CITIES[city_key]
+    cname, core = city["name"], city["core"]
+    around = [d for d in city["districts"] if d != core]
+    region_text = f"{city['full']} city and the surrounding {', '.join(around[:-1])} and {around[-1]} districts" if len(around) > 1 else city["full"]
+    city_nav = "".join(
+        (f'<a class="city{" on" if k == city_key else ""}" href="{"./" if k == config.DEFAULT_CITY else k + ".html"}"'
+         f'{" aria-current=\"page\"" if k == city_key else ""}>{e(c["name"])}</a>') if c["enabled"] else
+        f'<span class="city soon" aria-disabled="true">{e(c["name"])} <small>coming soon</small></span>'
+        for k, c in config.CITIES.items())
     week_start = now - timedelta(days=7)
     incidents = [cl for cl in clusters.values()
                  if cl[0].categories and cl[0].published >= week_start]
     incidents.sort(key=lambda cl: (-cl[0].severity, -len(cl), -cl[0].published.timestamp()))
     incidents = incidents[:500]
     day = [cl for cl in incidents if cl[0].published >= now - timedelta(hours=24)]
-    vizag = [cl for cl in incidents if "Visakhapatnam" in cl[0].districts]
+    vizag = [cl for cl in incidents if core in cl[0].districts]
 
     n_articles = sum(1 for i in items if i.published >= now - timedelta(hours=24))
     n_high = sum(1 for cl in day if cl[0].severity >= 4)
@@ -488,21 +476,21 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
                        ((0, "Any severity"), (3, "Elevated and above"), (4, "High and above"), (5, "Critical only")))
     incidents_body = f"""<div class="filters">
 <div class="frow" style="margin-bottom:8px"><button class="chip" id="chip-all">All</button>
-<button class="chip" id="chip-vizag">Vizag only</button>
+<button class="chip" id="chip-vizag">{e(core)} city only</button>
 <select id="f-win" aria-label="Time window">{win_opts}</select>
 <select id="f-sev" aria-label="Severity">{sev_opts}</select><span class="shown" id="shown"></span></div>
-<div class="frow"><select id="f-state" aria-label="State"></select><select id="f-district" aria-label="District"></select>
-<select id="f-area" aria-label="Vizag area"></select><select id="f-cat" aria-label="Category"></select>
+<div class="frow"><select id="f-state" aria-label="State" class="hidden"></select><select id="f-district" aria-label="District"></select>
+<select id="f-area" aria-label="Locality"></select><select id="f-cat" aria-label="Category"></select>
 <input id="f-q" type="search" placeholder="Search, e.g. ganja or digital arrest" aria-label="Search"></div></div>
 <div id="list">{"".join(_item_card(cl[0], cl[1:]) for cl in incidents)}</div>
 <p class="meta hidden" id="empty">No incidents match these filters. Try a longer time window.</p>"""
 
     trend_rows = "".join(
         f"<tr><td>{e(t['category'])}{'<span class=spike>Spike</span>' if t['spike'] else ''}</td>"
-        f"<td>{e(t['state'])}</td><td class=num>{t['current']}</td><td class=num>{t['previous']}</td>"
+        f"<td class=num>{t['current']}</td><td class=num>{t['previous']}</td>"
         f"<td class='num {'up' if t['change'] > 0 else 'down' if t['change'] < 0 else ''}'>{_pct(t)}</td></tr>"
-        for t in trends[:20]) or "<tr><td colspan=5>Not enough history yet.</td></tr>"
-    weekly_body = (f"<table><tr><th>Category</th><th>State</th><th class=num>This week</th><th class=num>Last week</th>"
+        for t in trends[:20]) or "<tr><td colspan=4>Not enough history yet.</td></tr>"
+    weekly_body = (f"<table><tr><th>Category</th><th class=num>This week</th><th class=num>Last week</th>"
                    f"<th class=num>Change</th></tr>{trend_rows}</table>")
 
     hot_rows = "".join(
@@ -536,7 +524,7 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
         trends_body = f"""<p class="note" style="margin-top:0">Outlook confidence <span class="conf">{outlook.conf}</span>
 {conf_text} Based on {outlook.n_reliable} reliable day{'s' if outlook.n_reliable != 1 else ''}; Medium from 7, High from 21.
 The outlook estimates how many <b>news-reported</b> incidents to expect. It is a planning aid, not a prediction of specific crimes.</p>
-<div class="viz"><h3>Incidents per day, AP and Telangana</h3>
+<div class="viz"><h3>Incidents per day in and around {e(cname)}</h3>
 <p class="sub">Last 30 days and the next 7. Next week: about {total['expected']:.0f} incidents (likely {total['low']}–{total['high']}), {_arrow(total)}</p>
 {charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
 <details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
@@ -544,7 +532,6 @@ The outlook estimates how many <b>news-reported</b> incidents to expect. It is a
         allp = predictions(outlook, 12)
         solid = [p for p in allp if p["evidence_grade"] != "Limited"][:6]
         early = [p for p in allp if p["evidence_grade"] == "Limited"][:6]
-        vz_preds = predictions(outlook, 4, "Visakhapatnam")
         watch_body = (_record_html(record, outlook.conf)
                       + f"""<details class="method"><summary>Method, sources and limits</summary>
 <h5>What is predicted</h5><p>How many incidents of a crime type will be <b>reported in the news</b> from a district in the next 7 days.
@@ -559,25 +546,22 @@ Not specific crimes, people or places.</p>
 <li>The chance of at least one incident is shown only once monitoring passes 7 days and the evidence is Moderate or Strong.</li></ol>
 <h5>Limits</h5><ul>
 <li>Only what the press reports. Unreported or under-reported crime is invisible here.</li>
-<li>The place is where the story says it happened or was announced (e.g. surrenders announced at the DGP office in Hyderabad).</li>
+<li>Covers {e(region_text)}. The place is where the story says it happened or was announced.</li>
 <li>Monitoring started {outlook.reliable_from + timedelta(days=2):%d %b %Y}; confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} days). Medium from 7 days, High from 21.</li></ul>
 <h5>How to verify</h5><p>Each card lists every incident it is based on, with links to the original reports and other outlets that covered it.</p>
 </details>"""
                       + "<h3>Predictions with Strong or Moderate evidence</h3>"
                       + (f'<div class="preds">{"".join(_pred_card(p) for p in solid)}</div>' if solid
-                         else "<p class='meta'>None yet. Predictions need at least 3 incidents from 2 different outlets.</p>")
+                         else f"<p class='meta'>None yet for {e(cname)}. A prediction needs at least 3 incidents from 2 different outlets; see early signals below.</p>")
                       + (f'<details class="early"><summary>Early signals with limited evidence ({len(early)})</summary>'
                          f'<p class="meta">Fewer than 3 incidents or only one outlet. Worth watching, not acting on.</p>'
                          f'<div class="preds">{"".join(_pred_card(p) for p in early)}</div></details>' if early else "")
-                      + "<h3>Vizag</h3>"
-                      + (f'<div class="preds">{"".join(_pred_card(p) for p in vz_preds)}</div>' if vz_preds
-                         else "<p class='meta'>No Vizag incidents in the last 30 days to base a prediction on.</p>")
                       + "<h3>All combinations at a glance</h3>"
                       + _outlook_table(outlook.watchlist(top=15), "Category in district", "Not enough district-level history yet.")
                       + "<h3>District outlook</h3>"
                       + _outlook_table(outlook.district_rows(top=15), "District / Commissionerate", "Not enough history yet."))
-        areas_body = _outlook_table(outlook.area_rows(top=20), "Vizag area",
-                                    "No Vizag area-level incidents in the last 30 days yet. Area names are picked up when a story mentions them, e.g. Gajuwaka or MVP Colony.")
+        areas_body = _outlook_table(outlook.area_rows(top=20), f"{cname} locality",
+                                    f"No locality-level incidents in the last 30 days yet. Localities are picked up when a story names them, e.g. Gajuwaka or MVP Colony.")
 
     # ---------------- tiles ----------------
     if outlook:
@@ -585,7 +569,7 @@ Not specific crimes, people or places.</p>
         t_trends = _tile("trends", "pulse", "Trends and outlook", f"""
 <div class="lead">~{total['expected']:.0f}<small>incidents expected next 7 days (likely {total['low']}–{total['high']})</small></div>
 <p>{_arrow(total)} &nbsp;<span class="pill">Confidence: {outlook.conf}</span></p>
-<div class="chartwrap">{charts.daily_chart(mini_hist, outlook.forecast_days(), width=560, height=290)}</div>
+<div class="chartwrap">{charts.daily_chart(mini_hist, outlook.forecast_days(), width=560, height=330)}</div>
 <div class="catstrip">{"".join(f'<div><b>~{r["expected"]:.0f}</b>{e(r["key"])} next week</div>' for r in outlook.category_rows(top=3))}</div>""",
                          "t-trends", "Open charts")
         tp = predictions(outlook, 3)
@@ -596,9 +580,9 @@ Not specific crimes, people or places.</p>
                             for p in tp) + "</ul><p>Expected next 7 days. Open for the evidence, why and where.</p>")
                         if tp else '<p class="empty-t">Builds up as district-level incidents come in.</p>')
         ar = outlook.area_rows(top=4)
-        t_areas = _tile("areas", "grid", "Vizag areas",
+        t_areas = _tile("areas", "grid", f"{cname} localities",
                         _bars(ar, lambda r: r["last7"] or r["expected"], fmt=lambda v: f"{v:.0f}") + "<p>Incidents in the last 7 days</p>"
-                        if ar else '<p class="empty-t">No area-level Vizag incidents yet this month.</p>')
+                        if ar else '<p class="empty-t">No locality-level incidents yet this month.</p>')
     else:
         t_trends = t_watch = t_areas = ""
 
@@ -617,15 +601,15 @@ Not specific crimes, people or places.</p>
             vz_areas[a] = vz_areas.get(a, 0) + 1
     vz_top = ", ".join(a for a, _ in sorted(vz_areas.items(), key=lambda kv: -kv[1])[:3])
     vz_latest = max(vizag, key=lambda cl: cl[0].published)[0].title[:90] if vizag else ""
-    t_vizag = (f'<div class="tile" role="button" tabindex="0" aria-label="Vizag watch: open" data-open="incidents" data-preset=\'{{"district":"Visakhapatnam","win":"168"}}\' aria-haspopup="dialog">'
-               f'<div class="hd">{icon("pin")}<h2>Vizag watch</h2></div>'
+    t_vizag = (f'<div class="tile" role="button" tabindex="0" aria-label="{e(core)} city: open" data-open="incidents" data-preset=\'{{"district":"{e(core)}","win":"168"}}\' aria-haspopup="dialog">'
+               f'<div class="hd">{icon("pin")}<h2>{e(core)} city</h2></div>'
                f'<div class="lead">{len(vizag)}<small>incidents in 7 days</small></div>'
-               + (f"<p>Latest: {e(vz_latest)}</p>" if vz_latest else "<p>No Vizag incidents this week.</p>")
+               + (f"<p>Latest: {e(vz_latest)}</p>" if vz_latest else f"<p>No incidents in {e(core)} city this week.</p>")
                + (f"<p>Areas: {e(vz_top)}</p>" if vz_top else "") + "</div>")
 
-    t_dist = _tile("districts", "eye", "District hotspots",
+    t_dist = _tile("districts", "eye", f"In and around {cname}",
                    _bars(hotspots[:4], lambda h: h["total"], label=lambda h: h["district"]) + "<p>Incidents in the last 7 days</p>"
-                   if hotspots else '<p class="empty-t">No district-tagged incidents yet.</p>')
+                   if hotspots else '<p class="empty-t">No incidents in the last 7 days.</p>')
     ups = sum(1 for t in trends if t.get("spike"))
     building = trends and trends[0].get("baseline") is False
     t_week = _tile("weekly", "swap", "Weekly changes",
@@ -641,8 +625,8 @@ Not specific crimes, people or places.</p>
         _dialog("incidents", "list", "Incidents", "Deduplicated, highest severity first. Filters are saved in the page link.", incidents_body),
         _dialog("trends", "pulse", "Trends and 7-day outlook", "Incidents per day and what to expect next week", trends_body) if outlook else "",
         _dialog("watch", "target", "Predictions", "What is likely next week, why, and where", watch_body) if outlook else "",
-        _dialog("areas", "grid", "Vizag areas outlook", "Locality-level incidents and next-week outlook", areas_body) if outlook else "",
-        _dialog("districts", "eye", "District hotspots", "Last 7 days", districts_body),
+        _dialog("areas", "grid", f"{cname} localities", "Locality-level incidents and next-week outlook", areas_body) if outlook else "",
+        _dialog("districts", "eye", f"In and around {cname}", "Incidents by district, last 7 days", districts_body),
         _dialog("weekly", "swap", "Weekly changes", "This week against last week", weekly_body),
         _dialog("scams", "hook", "Scam techniques", "Modus operandi in this week's news", scams_body),
     ])
@@ -650,28 +634,28 @@ Not specific crimes, people or places.</p>
     banner = ('<div class="banner"><b>Demo mode.</b> The headlines below are made-up sample data, not real incidents.</div>'
               if demo else "")
     cfg = json.dumps({
-        "refreshUrl": REFRESH_URL,
         "actionsUrl": f"https://github.com/{REPO}/actions/workflows/hourly.yml",
         "generatedAt": int(now.timestamp()),
-        "defaultWin": hours,
+        "defaultWin": hours, "core": core,
     })
     spike_n = sum(1 for t in trends if t["spike"])
 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Crime and threat board, {local(now):%d %b %Y}</title>
+<title>{e(cname)} crime and threat board, {local(now):%d %b %Y}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
 <style>{CSS}</style></head><body>
 <header class="board"><div class="board-in">
 <div class="top"><div class="emblem">{icon("eye", 24)}</div>
-<div class="title"><h1>Crime and threat board</h1><p>Andhra Pradesh and Telangana, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.</p></div>
-<div class="actions"><button class="refresh" id="refresh">{icon("refresh", 18)}<span>Refresh now</span></button><div id="rstatus"></div></div></div>
+<div class="title"><h1>{e(cname)} crime and threat board</h1><p>Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.</p></div>
+</div>
+<nav class="cities" aria-label="City">{city_nav}</nav>
 <div class="counters">
-<div class="counter"><b>{n_articles}</b><span>news articles scanned today</span></div>
+<div class="counter"><b>{n_articles}</b><span>news reports today</span></div>
 <div class="counter"><b>{len(day)}</b><span>incidents in 24 hours</span></div>
 <div class="counter{' alert' if n_high else ''}"><b>{n_high}</b><span>high or critical</span></div>
-<div class="counter"><b>{len(vizag)}</b><span>in Vizag this week</span></div>
+<div class="counter"><b>{len(incidents)}</b><span>incidents this week</span></div>
 </div></div></header>
 {banner}
 <main><div class="tiles">
@@ -680,6 +664,6 @@ Not specific crimes, people or places.</p>
 {dialogs}
 <footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate.
 {f'{spike_n} category spike{"s" if spike_n != 1 else ""} this week. ' if spike_n else ''}Data: <a href="incidents.json">incidents.json</a>, <a href="outlook.json">outlook.json</a></footer>
-<script>{_JS.replace("__CFG__", cfg)}{_REFRESH_JS}</script>
+<script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}</script>
 <script>{charts.TIP_JS}</script>
 </body></html>"""

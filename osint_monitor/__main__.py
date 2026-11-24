@@ -30,6 +30,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="output HTML path")
     ap.add_argument("--json", action="store_true", help="also export incidents as JSON")
     ap.add_argument("--json-out", default=None, help="path for the JSON export (implies --json)")
+    ap.add_argument("--city", default=None, help="(unused for now) all enabled cities are built")
     ap.add_argument("--no-llm", action="store_true", help="skip Claude enrichment even if a key is set")
     args = ap.parse_args(argv)
 
@@ -69,51 +70,71 @@ def main(argv=None) -> int:
     clusters = analysis.cluster(items)
     store.upsert(items)  # persist cluster ids
 
-    trends = analysis.category_trends(items, now)
-    hotspots = analysis.district_hotspots(items, now)
-    emerging = analysis.emerging_terms(items, now)
-
     tz = report._TZ
     started = store.tracking_start() or now
     if args.demo:  # pretend monitoring has run for 10 days so the demo shows a full outlook
         started = now - timedelta(days=10)
-    outlook = Outlook(clusters, started.astimezone(tz).date(), now.astimezone(tz).date(), tz)
-
+    start_day, today = started.astimezone(tz).date(), now.astimezone(tz).date()
     baseline_ok = (now - started) >= timedelta(days=14)
-    if not baseline_ok:  # last week wasn't monitored yet, so "spikes" would be artefacts
-        for t in trends:
-            t["spike"] = False
-            t["baseline"] = False
 
-    if not args.demo:
-        store.log_predictions(outlook.today, all_for_log(outlook))
-    record = track_record(store, outlook)
+    # Statewide outlook: every prediction is logged so the track record can't be cherry-picked
+    outlook_all = Outlook(clusters, start_day, today, tz)
+    log_rows = all_for_log(outlook_all)
 
-    page = report.render(record=record, items=items, clusters=clusters, trends=trends, hotspots=hotspots,
-                         emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook)
     os.makedirs(config.REPORT_DIR, exist_ok=True)
     out = args.out or os.path.join(config.REPORT_DIR,
                                    f"brief_{now:%Y%m%d}{'_demo' if args.demo else ''}.html")
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w", encoding="utf-8") as fh:
-        fh.write(page)
-    print(f"Brief written to {out}")
-    def _rows(rows):
-        return [{"name": r["key"] if isinstance(r["key"], str) else " in ".join(r["key"]),
-                 "last_7_days": r["last7"], "expected_next_7": round(r["expected"], 2),
-                 "range": [r["low"], r["high"]], "chance_any": round(r["p_any"], 3),
-                 "trend": round(r["trend"], 2)} for r in rows]
-    with open(os.path.join(os.path.dirname(out) or ".", "outlook.json"), "w", encoding="utf-8") as fh:
-        json.dump({"generated_at": now.isoformat(), "confidence": outlook.conf,
-                   "reliable_days": outlook.n_reliable,
-                   "total": _rows([{"key": "All incidents", **outlook.project(outlook.total)}])[0],
-                   "categories": _rows(outlook.category_rows()), "districts": _rows(outlook.district_rows()),
-                   "vizag_areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist()),
-                   "predictions": predictions(outlook, 8),
-                   "vizag_predictions": predictions(outlook, 6, "Visakhapatnam"),
-                   "track_record": {k: v for k, v in record.items() if k != "first_check"}
-                                   | {"first_check": str(record["first_check"] or "")}},
-                  fh, indent=2, ensure_ascii=False)
+    out_dir = os.path.dirname(out) or "."
+    os.makedirs(out_dir, exist_ok=True)
+
+    default_out = None
+    for key, city in config.CITIES.items():
+        if not city["enabled"]:
+            continue
+        cdists = set(city["districts"])
+        c_clusters = {cid: cl for cid, cl in clusters.items() if set(cl[0].districts) & cdists}
+        c_items = [it for cl in c_clusters.values() for it in cl]
+        trends = analysis.category_trends(c_items, now)
+        if not baseline_ok:  # last week wasn't monitored yet, so "spikes" would be artefacts
+            for t in trends:
+                t["spike"] = False
+                t["baseline"] = False
+        hotspots = analysis.district_hotspots(c_items, now)
+        emerging = analysis.emerging_terms(c_items, now)
+        outlook = Outlook(c_clusters, start_day, today, tz)
+        log_rows.append({"category": "*", "district": f"city:{key}", **outlook.project(outlook.total), "evidence": ""})
+        record = track_record(store, outlook, districts=cdists, city=key)
+
+        page = report.render(record=record, items=c_items, clusters=c_clusters, trends=trends, hotspots=hotspots,
+                             emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook,
+                             city_key=key)
+        path = out if key == config.DEFAULT_CITY else os.path.join(out_dir, f"{key}.html")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(page)
+        print(f"{city['name']}: {sum(1 for cl in c_clusters.values() if cl[0].categories)} incidents in 14 days -> {path}")
+        if key != config.DEFAULT_CITY:
+            continue
+        default_out = (c_clusters, outlook, record)
+
+        def _rows(rows):
+            return [{"name": r["key"] if isinstance(r["key"], str) else " in ".join(r["key"]),
+                     "last_7_days": r["last7"], "expected_next_7": round(r["expected"], 2),
+                     "range": [r["low"], r["high"]], "chance_any": round(r["p_any"], 3),
+                     "trend": round(r["trend"], 2)} for r in rows]
+        with open(os.path.join(out_dir, "outlook.json"), "w", encoding="utf-8") as fh:
+            json.dump({"generated_at": now.isoformat(), "city": city["name"], "districts": city["districts"],
+                       "confidence": outlook.conf, "reliable_days": outlook.n_reliable,
+                       "total": _rows([{"key": "All incidents", **outlook.project(outlook.total)}])[0],
+                       "categories": _rows(outlook.category_rows()), "by_district": _rows(outlook.district_rows()),
+                       "areas": _rows(outlook.area_rows()), "watchlist": _rows(outlook.watchlist()),
+                       "predictions": predictions(outlook, 8),
+                       "track_record": {k: v for k, v in record.items() if k != "first_check"}
+                                       | {"first_check": str(record["first_check"] or "")}},
+                      fh, indent=2, ensure_ascii=False)
+
+    if not args.demo:
+        store.log_predictions(today, log_rows)
+    clusters = default_out[0] if default_out else clusters
     with open(os.path.join(os.path.dirname(out) or ".", "status.json"), "w") as fh:
         json.dump({"generated_at": int(now.timestamp()), "items": len(items)}, fh)
 

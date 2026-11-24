@@ -38,6 +38,13 @@ FEEDS = {
     "gnews_digital_arrest": _gnews("digital arrest scam"),
     "gnews_vizag_police": _gnews("Visakhapatnam police"),
     "gnews_vizag_crime": _gnews("Vizag crime OR cyber OR ganja"),
+    "gnews_vizag_arrest": _gnews("Visakhapatnam arrested OR held OR seized"),
+    "gnews_vizag_localities": _gnews("Gajuwaka OR Pendurthi OR Madhurawada OR Bheemili OR Simhachalam police"),
+    "gnews_vizag_accident": _gnews("Visakhapatnam accident OR killed"),
+    "gnews_yovizag": _gnews("site:yovizag.com police OR arrest OR cyber"),
+    "gnews_anakapalli": _gnews("Anakapalli police OR arrested OR seized"),
+    "gnews_vizianagaram": _gnews("Vizianagaram police OR arrested OR seized"),
+    "gnews_asr_ganja": _gnews("Paderu OR Araku OR Alluri Sitharama Raju ganja OR police"),
     "thehindu_vizag": "https://www.thehindu.com/news/cities/Visakhapatnam/feeder/default.rss",
     "thehindu_ap": "https://www.thehindu.com/news/national/andhra-pradesh/feeder/default.rss",
     "thehindu_ts": "https://www.thehindu.com/news/national/telangana/feeder/default.rss",
@@ -50,9 +57,11 @@ FEEDS = {
 DISTRICTS = {
     "Andhra Pradesh": {
         "Visakhapatnam": ["visakhapatnam", "vizag", "vishakhapatnam", "gajuwaka"],
-        "Anakapalli": ["anakapalli"],
-        "Alluri Sitharama Raju": ["alluri sitharama raju", "asr district", "paderu", "araku"],
-        "Vizianagaram": ["vizianagaram"],
+        "Anakapalli": ["anakapalli", "narsipatnam", "yelamanchili", "atchutapuram", "parawada", "chodavaram",
+                       "payakaraopeta", "kasimkota", "nakkapalli", "rambilli", "sabbavaram"],
+        "Alluri Sitharama Raju": ["alluri sitharama raju", "asr district", "paderu", "araku", "chintapalli",
+                                  "g madugula", "munchingiputtu", "dumbriguda", "rampachodavaram", "chintur"],
+        "Vizianagaram": ["vizianagaram", "bobbili", "cheepurupalli", "gajapathinagaram", "s kota", "srungavarapukota"],
         "Srikakulam": ["srikakulam"],
         "Parvathipuram Manyam": ["parvathipuram"],
         "East Godavari": ["east godavari", "rajamahendravaram", "rajahmundry"],
@@ -153,6 +162,22 @@ SUB_AREAS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Cities shown in the dashboard's city selector. A city covers its own district
+# plus the districts around it ("in and around"). Only enabled cities get a page.
+# ---------------------------------------------------------------------------
+CITIES = {
+    "vizag": {"name": "Vizag", "full": "Visakhapatnam", "enabled": True, "core": "Visakhapatnam",
+              "districts": ["Visakhapatnam", "Anakapalli", "Alluri Sitharama Raju", "Vizianagaram"]},
+    "hyderabad": {"name": "Hyderabad", "full": "Hyderabad", "enabled": False, "core": "Hyderabad",
+                  "districts": ["Hyderabad", "Cyberabad", "Rachakonda", "Rangareddy", "Medchal-Malkajgiri"]},
+    "vijayawada": {"name": "Vijayawada", "full": "Vijayawada", "enabled": False, "core": "NTR",
+                   "districts": ["NTR", "Krishna", "Guntur"]},
+    "tirupati": {"name": "Tirupati", "full": "Tirupati", "enabled": False, "core": "Tirupati",
+                 "districts": ["Tirupati", "Chittoor", "Annamayya"]},
+}
+DEFAULT_CITY = "vizag"
+
 STATE_ALIASES = {
     "Andhra Pradesh": ["andhra pradesh", " a.p.", " ap "],
     "Telangana": ["telangana"],
@@ -190,7 +215,19 @@ CATEGORIES = {
     "Violent crime": {
         "murder": 3, "murdered": 3, "killed": 2, "stabbed": 2, "attack": 1,
         "robbery": 2, "dacoity": 3, "chain snatching": 2, "kidnap": 3,
-        "abducted": 3, "shot dead": 3, "assault": 2, "burglary": 1, "theft": 1,
+        "abducted": 3, "shot dead": 3, "assault": 2,
+        "found dead": 2, "body found": 2, "suspicious death": 3, "suspicious circumstances": 2, "hacked to death": 3,
+    },
+    "Property crime": {
+        "burglary": 2, "house burglary": 3, "housebreaking": 3, "house break-in": 3, "break-in": 2,
+        "theft case": 2, "held in theft": 2, "thieves": 2, "thief": 2, "stolen": 2, "gold recovered": 2,
+        "bike theft": 3, "vehicle theft": 3, "two-wheeler theft": 3, "temple theft": 3, "burglars": 3,
+        "chain snatcher": 3, "pickpocket": 2, "property recovered": 2, "stolen property": 3,
+    },
+    "Road accidents": {
+        "road accident": 3, "road accidents": 3, "hit-and-run": 3, "hit and run": 3, "accident": 1,
+        "collided": 2, "rammed": 2, "overturned": 2, "fatal": 1, "drunk driving": 3, "drunken driving": 3,
+        "killed in accident": 3, "mishap": 1, "run over": 2,
     },
     "Crimes against women & children": {
         "pocso": 3, "sexual assault": 3, "rape": 3, "dowry": 2, "sexual harassment": 3, "harassed woman": 2,

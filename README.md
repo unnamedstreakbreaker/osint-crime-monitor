@@ -21,24 +21,10 @@ Filters are saved in the link, so you can bookmark a view, e.g.
 `https://unnamedstreakbreaker.github.io/osint-crime-monitor/#district=Visakhapatnam`.
 Add or rename areas in `SUB_AREAS` in `osint_monitor/config.py`.
 
-**Refresh now** fetches the news immediately instead of waiting for the hourly run.
-The page then reloads by itself when the new brief is ready (about 2–3 minutes).
-
-- *Without setup:* the button opens GitHub's "Run workflow" page. Only you, the repo owner, can click it there.
-- *One-click for anyone (free, ~10 minutes, recommended):*
-  1. GitHub → Settings → Developer settings → Fine-grained tokens → **Generate new token**.
-     Repository access: *Only* `osint-crime-monitor`. Permissions: **Actions: Read and write**. Copy the token.
-  2. dash.cloudflare.com → Workers & Pages → **Create → Worker** → name it `osint-refresh` → Deploy →
-     **Edit code**, paste `refresh-worker/worker.js`, Deploy.
-  3. Worker → Settings → Variables and Secrets: add `GITHUB_TOKEN` (Secret), `REPO` =
-     `unnamedstreakbreaker/osint-crime-monitor`, `WORKFLOW` = `hourly.yml`,
-     `ALLOWED_ORIGIN` = `https://unnamedstreakbreaker.github.io`.
-  4. GitHub repo → Settings → Secrets and variables → Actions → **Variables** → New variable
-     `OSINT_REFRESH_URL` = your Worker URL (e.g. `https://osint-refresh.<you>.workers.dev`).
-  5. Run the workflow once. From then on the button refreshes in one click.
-
-  The token never appears in the web page. The Worker only starts this one workflow, and it won't
-  start a run while one is already going or within 5 minutes of the last one.
+**City selector.** The dashboard covers one city at a time: Vizag (Visakhapatnam city plus the
+surrounding Anakapalli, Alluri Sitharama Raju and Vizianagaram districts). Hyderabad, Vijayawada and
+Tirupati are listed as coming soon. To switch one on, set `"enabled": True` in `CITIES` in
+`osint_monitor/config.py`; it gets its own page (e.g. `hyderabad.html`).
 
 ## Trends & 7-day outlook
 
