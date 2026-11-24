@@ -48,6 +48,9 @@ ICONS = {
     "swap": '<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>',
     "hook": '<path d="M12 3v10a4 4 0 1 1-4-4"/><path d="M12 3l3 3"/>',
     "close": '<path d="M6 6l12 12M18 6L6 18"/>',
+    "download": '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    "offline": '<path d="M2 8.5a15 15 0 0 1 4-2.6M22 8.5A15 15 0 0 0 10 5.1M5 12.5a10 10 0 0 1 3-1.9M19 12.5a10 10 0 0 0-4.6-2.4M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/>',
+    "share": '<path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
     "refresh": '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
 }
 
@@ -62,7 +65,22 @@ CSS = """
 --ink:#1b2433;--ink2:#55606f;--line:#d9dee5;--soft:#f5f7fa;
 --display:"Barlow Condensed","Noto Sans Telugu","Arial Narrow",system-ui,sans-serif;--body:"Barlow","Noto Sans Telugu",system-ui,-apple-system,"Segoe UI",sans-serif}
 html[lang=te] body{line-height:1.6}html[lang=te] .glance{grid-template-columns:128px 1fr}html[lang=te] .tile h2,html[lang=te] .dlg-hd h2,html[lang=te] .title h1{letter-spacing:0}
-.lang{margin-left:auto;display:inline-flex;border:1px solid #3a5480;border-radius:999px;overflow:hidden;flex:none}
+.actions{margin-left:auto;display:flex;align-items:center;gap:10px;flex:none}
+.install{display:inline-flex;align-items:center;gap:6px;background:var(--brass);color:var(--navy);border:0;border-radius:999px;
+ padding:7px 14px;font-weight:600;font-size:14.5px;cursor:pointer}
+.install[hidden]{display:none}
+.offline{display:flex;align-items:center;justify-content:center;gap:8px;background:#fff4e5;color:#7a4b00;font-size:14px;padding:8px 16px}
+.offline[hidden]{display:none}
+.ioshint{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;gap:10px;
+ background:var(--navy);color:#fff;border:1px solid var(--brass);border-radius:12px;padding:12px 14px;font-size:14.5px;box-shadow:0 10px 30px rgba(10,20,40,.35)}
+.ioshint .ic{color:var(--brass);flex:none}.ioshint[hidden]{display:none}
+.x2{margin-left:auto;background:transparent;border:0;color:#fff;cursor:pointer;padding:6px;flex:none}
+html{-webkit-tap-highlight-color:transparent}
+.board{padding-top:max(22px,env(safe-area-inset-top))}
+.app .board{padding-top:max(14px,env(safe-area-inset-top))}
+footer{padding-bottom:max(30px,env(safe-area-inset-bottom))}
+.lang{display:inline-flex;border:1px solid #3a5480;border-radius:999px;overflow:hidden;flex:none}
+
 .lang a{color:#dfe6f1;text-decoration:none;padding:6px 14px;font-size:14.5px}
 .lang a.on{background:var(--brass);color:var(--navy);font-weight:600}
 .lang a:not(.on):hover{background:#2c4369}
@@ -233,6 +251,32 @@ footer{color:var(--ink2);font-size:13px;text-align:center;padding:8px 20px 30px}
 }
 """
 CSS += charts.CSS
+CSS += """
+/* phone layout: last so it wins over the base rules */
+@media(max-width:640px){
+ .top{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:10px 12px}
+ .emblem{width:38px;height:38px;grid-row:1}.emblem .ic{width:20px;height:20px}
+ .actions{grid-column:2;grid-row:1;justify-self:end}
+ .title{grid-column:1/-1;grid-row:2}
+ .title h1{font-size:27px}.title p{font-size:13.5px;margin-top:4px}
+ .install span{display:none}.install{padding:8px}
+ .cities{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:14px -16px 0;padding:0 16px}
+ .cities::-webkit-scrollbar{display:none}.city{flex:none}
+ .tile{padding:16px}.tile:active{transform:scale(.99)}
+ .filters{position:static}
+ .filters .frow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+ .filters .frow .chip{text-align:center}
+ .filters select,.filters input{width:100%;min-width:0}
+ .filters input,.shown{grid-column:1/-1}.shown{margin-left:0}
+ .dlg-hd{padding-top:max(14px,env(safe-area-inset-top))}
+ .dlg-hd h2{font-size:23px}.dlg-hd p{font-size:13px}
+ .dlg-bd{padding:16px 14px 30px}
+ .dlg-bd table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .pred{padding:14px}.pred h4{font-size:20px}.pred .count{font-size:30px}
+ .glance{grid-template-columns:86px 1fr}
+ .brief{padding:14px 16px}.brief li{font-size:14.5px}
+}
+"""
 
 
 def _pct(t) -> str:
@@ -517,6 +561,30 @@ def locals_for_render(ns):
                                "outlook", "record", "city_key")}
 
 
+_PWA_JS = r"""
+// ---- app (PWA): offline support, install button, iPhone hint ----------------
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+const off = $('#offline');
+const netState = () => { off.hidden = navigator.onLine; };
+addEventListener('online', netState); addEventListener('offline', netState); netState();
+
+let deferred = null;
+const inst = $('#install');
+addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); deferred = ev; inst.hidden = false; });
+inst.addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; inst.hidden = true; });
+addEventListener('appinstalled', () => { inst.hidden = true; });
+
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
+let hintSeen = false; try { hintSeen = localStorage.getItem('ioshint') === '1'; } catch (e) {}
+if (ios && !standalone && !hintSeen) $('#ioshint').hidden = false;
+$('#ioshint-x').addEventListener('click', () => { $('#ioshint').hidden = true; try { localStorage.setItem('ioshint', '1'); } catch (e) {} });
+if (standalone) document.documentElement.classList.add('app');
+"""
+
+
 def _render(*, items, clusters, trends, hotspots, emerging, now, hours, demo, outlook, record, city_key) -> str:
     city = config.CITIES[city_key]
     cname, core = city["name"], city["core"]
@@ -740,7 +808,14 @@ Not specific crimes, people or places.</p>
     spike_n = sum(1 for t in trends if t["spike"])
 
     return f"""<!DOCTYPE html><html lang="{_LANG}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#13233f">
+<link rel="manifest" href="{'manifest.te.webmanifest' if _LANG == 'te' else 'manifest.webmanifest'}">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="{L(cname + ' Crime Board', 'విశాఖ నేర బోర్డు')}">
 <title>{e(cname)} crime and threat board, {local(now):%d %b %Y}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=Noto+Sans+Telugu:wght@400;500;600&display=swap" rel="stylesheet">
@@ -749,7 +824,8 @@ Not specific crimes, people or places.</p>
 <div class="top"><div class="emblem">{icon("eye", 24)}</div>
 <div class="title"><h1>{e(cname)} crime and threat board</h1><p>{L(f"Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.",
  f"{e(region_text)}లో నమోదైన ఘటనలు, బహిరంగ వార్తల ఆధారంగా. చివరి అప్‌డేట్ {local(now):%d %b %Y, %H:%M} IST; ప్రతి గంటకు.")}</p></div>
-<nav class="lang" aria-label="Language"><a href="{page_of(city_key, 'en')}" data-lang="en"{' class="on" aria-current="true"' if _LANG == "en" else ''}>English</a><a href="{page_of(city_key, 'te')}" data-lang="te"{' class="on" aria-current="true"' if _LANG == "te" else ''}>తెలుగు</a></nav>
+<div class="actions"><button class="install" id="install" hidden>{icon("download", 18)}<span>Install app</span></button>
+<nav class="lang" aria-label="Language"><a href="{page_of(city_key, 'en')}" data-lang="en"{' class="on" aria-current="true"' if _LANG == "en" else ''}>English</a><a href="{page_of(city_key, 'te')}" data-lang="te"{' class="on" aria-current="true"' if _LANG == "te" else ''}>తెలుగు</a></nav></div>
 </div>
 <nav class="cities" aria-label="City">{city_nav}</nav>
 <div class="counters">
@@ -759,12 +835,15 @@ Not specific crimes, people or places.</p>
 <div class="counter"><b>{len(incidents)}</b><span>incidents this week</span></div>
 </div></div></header>
 {banner}
+<div class="offline" id="offline" hidden>{icon("offline", 18)}<span>You are offline. Showing data saved at {local(now):%d %b, %H:%M} IST.</span></div>
 <main><div class="tiles">
 {t_trends}{t_inc}{t_vizag}{t_watch}{t_dist}{t_areas}{t_week}{t_scams}
 </div></main>
 {dialogs}
 <footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate. News headlines are shown as published.
 {f'{spike_n} category spike{"s" if spike_n != 1 else ""} this week. ' if spike_n else ''}Data: <a href="incidents.json">incidents.json</a>, <a href="outlook.json">outlook.json</a></footer>
-<script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}</script>
+<div class="ioshint" id="ioshint" hidden>{icon("share", 20)}<span>Install this app: tap Share, then Add to Home Screen.</span>
+<button class="x2" id="ioshint-x" aria-label="Close">{icon("close", 16)}</button></div>
+<script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}{_PWA_JS}</script>
 <script>{charts.TIP_JS}</script>
 </body></html>"""

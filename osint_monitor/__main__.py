@@ -21,6 +21,33 @@ from .fetcher import fetch_all
 from .store import Store
 
 
+def write_pwa(out_dir: str, now) -> None:
+    """Icons, per-language web app manifests and the versioned service worker."""
+    import shutil
+    static = os.path.join(os.path.dirname(__file__), "static")
+    for f in os.listdir(static):
+        if f.endswith(".png"):
+            shutil.copyfile(os.path.join(static, f), os.path.join(out_dir, f))
+    with open(os.path.join(static, "sw.js"), encoding="utf-8") as fh:
+        sw = fh.read().replace("__VERSION__", now.strftime("%Y%m%d%H%M"))
+    with open(os.path.join(out_dir, "sw.js"), "w", encoding="utf-8") as fh:
+        fh.write(sw)
+    city = config.CITIES[config.DEFAULT_CITY]
+    icons = [{"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+             {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
+             {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
+    for lang, fname, name, short, desc, start in (
+        ("en", "manifest.webmanifest", f"{city['name']} Crime and Threat Board", f"{city['name']} Crime Board",
+         f"Crime and security incidents in and around {city['full']}, from public news, with a 7-day outlook.", "./index.html"),
+        ("te", "manifest.te.webmanifest", "విశాఖ నేర, ముప్పు పర్యవేక్షణ బోర్డు", "విశాఖ నేర బోర్డు",
+         "విశాఖపట్నం, పరిసర ప్రాంతాల్లో నేర ఘటనలు, 7 రోజుల అంచనాతో.", "./te.html")):
+        with open(os.path.join(out_dir, fname), "w", encoding="utf-8") as fh:
+            json.dump({"name": name, "short_name": short, "description": desc, "lang": lang,
+                       "id": start, "start_url": start, "scope": "./", "display": "standalone",
+                       "background_color": "#13233f", "theme_color": "#13233f", "icons": icons},
+                      fh, ensure_ascii=False, indent=2)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="osint_monitor", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -135,6 +162,8 @@ def main(argv=None) -> int:
                        "track_record": {k: v for k, v in record.items() if k != "first_check"}
                                        | {"first_check": str(record["first_check"] or "")}},
                       fh, indent=2, ensure_ascii=False)
+
+    write_pwa(out_dir, now)
 
     if not args.demo:
         store.log_predictions(today, log_rows)
