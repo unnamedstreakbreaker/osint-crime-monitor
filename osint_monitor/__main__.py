@@ -105,12 +105,16 @@ def main(argv=None) -> int:
         log_rows.append({"category": "*", "district": f"city:{key}", **outlook.project(outlook.total), "evidence": ""})
         record = track_record(store, outlook, districts=cdists, city=key)
 
-        page = report.render(record=record, items=c_items, clusters=c_clusters, trends=trends, hotspots=hotspots,
-                             emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook,
-                             city_key=key)
-        path = out if key == config.DEFAULT_CITY else os.path.join(out_dir, f"{key}.html")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(page)
+        for lang in ("en", "te"):
+            page = report.render(record=record, items=c_items, clusters=c_clusters, trends=trends, hotspots=hotspots,
+                                 emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook,
+                                 city_key=key, lang=lang)
+            if key == config.DEFAULT_CITY:
+                path = out if lang == "en" else os.path.join(out_dir, "te.html")
+            else:
+                path = os.path.join(out_dir, f"{key}{'.te' if lang == 'te' else ''}.html")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(page)
         print(f"{city['name']}: {sum(1 for cl in c_clusters.values() if cl[0].categories)} incidents in 14 days -> {path}")
         if key != config.DEFAULT_CITY:
             continue

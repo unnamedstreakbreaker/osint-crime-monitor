@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 from . import charts
 from .config import DISPLAY_TZ, REPO
 from .fetcher import NewsItem
-from .explain import predictions, EVIDENCE_RULE, city_insights, fmt_rupees
+from .explain import predictions, EVIDENCE_RULE, city_insights, city_facts, fmt_rupees, TERM_LABEL
+from . import i18n
+from .i18n import news
 from . import config
 from urllib.parse import urlparse, parse_qs
 
@@ -18,6 +20,14 @@ try:
 except Exception:  # tzdata missing on some Windows installs
     from datetime import timezone as _tz
     _TZ = _tz(timedelta(hours=5, minutes=30))
+
+
+_LANG = "en"
+
+
+def L(en: str, te: str) -> str:
+    """Pick the string for the page being rendered."""
+    return te if _LANG == "te" else en
 
 
 def local(dt: datetime) -> datetime:
@@ -50,7 +60,12 @@ def icon(name: str, size: int = 22) -> str:
 CSS = """
 :root{--navy:#13233f;--navy2:#1d3358;--brass:#b8913a;--brass-soft:#f3ead3;--page:#edf0f4;--tile:#fff;
 --ink:#1b2433;--ink2:#55606f;--line:#d9dee5;--soft:#f5f7fa;
---display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;--body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif}
+--display:"Barlow Condensed","Noto Sans Telugu","Arial Narrow",system-ui,sans-serif;--body:"Barlow","Noto Sans Telugu",system-ui,-apple-system,"Segoe UI",sans-serif}
+html[lang=te] body{line-height:1.6}html[lang=te] .glance{grid-template-columns:128px 1fr}html[lang=te] .tile h2,html[lang=te] .dlg-hd h2,html[lang=te] .title h1{letter-spacing:0}
+.lang{margin-left:auto;display:inline-flex;border:1px solid #3a5480;border-radius:999px;overflow:hidden;flex:none}
+.lang a{color:#dfe6f1;text-decoration:none;padding:6px 14px;font-size:14.5px}
+.lang a.on{background:var(--brass);color:var(--navy);font-weight:600}
+.lang a:not(.on):hover{background:#2c4369}
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.5 var(--body);background:var(--page);color:var(--ink)}
 a{color:inherit}
@@ -232,8 +247,14 @@ def e(s) -> str:
     return html.escape(str(s), quote=True)
 
 
+def _term(t: str) -> str:
+    return i18n.term(TERM_LABEL.get(t, t)) if _LANG == "te" else t
+
+
 def _name(key) -> str:
-    return key if isinstance(key, str) else " in ".join(key)
+    if isinstance(key, str):
+        return key
+    return L(" in ".join(key), f"{key[1]}లో {i18n.cat(key[0])}")
 
 
 def _arrow(p) -> str:
@@ -270,19 +291,22 @@ def _pred_card(p) -> str:
     chance = (f'<div class="chance"><s><b style="width:{p["chance"] * 100:.0f}%"></b></s>'
               f'At least one: {e(p["chance_text"])}{arrow}</div>') if p["show_chance"] else ""
     ev = "".join(
-        f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{e(x["title"][:120])} '
-        f'<span>({e(x["place"])}, {e(x["source"])}, {x["when"]})</span>'
-        + (f' <em>also {e(", ".join(x["also"][:3]))}</em>' if x["also"] else "") + "</a>" for x in p["evidence"])
-    rows = [("Crime type", p["category"]),
+        f'<a href="{e(x["link"])}" target="_blank" rel="noopener">{news(e(x["title"][:120]))} '
+        f'<span>({e(x["place"])}, {news(e(x["source"]))}, {x["when"]})</span>'
+        + (f' <em>{L("also", "ఇవి కూడా:")} {news(e(", ".join(x["also"][:3])))}</em>' if x["also"] else "") + "</a>" for x in p["evidence"])
+    none = L("Not stated in reports", "నివేదికల్లో పేర్కొనలేదు")
+    rows = [("Crime type", p.get("category_label", p["category"])),
             ("Where", p["where_short"]),
-            ("Expected", f"About {p['expected']:.0f} in the next 7 days (likely {p['low']}–{p['high']}); "
-                         f"{p['n7']} in the last 7 days"),
-            ("Who", ", ".join(p["victims"]).capitalize() if p["victims"] else "Not stated in reports"),
-            ("Method", ", ".join(p["methods"]).capitalize() if p["methods"] else "Not stated in reports")]
+            ("Expected", L(f"About {p['expected']:.0f} in the next 7 days (likely {p['low']}–{p['high']}); {p['n7']} in the last 7 days",
+                           f"వచ్చే 7 రోజుల్లో సుమారు {p['expected']:.0f} (పరిధి {p['low']}–{p['high']}); గత 7 రోజుల్లో {p['n7']}")),
+            ("Who", p.get("victims_label") or (", ".join(p["victims"]).capitalize() if p["victims"] else none)),
+            ("Method", p.get("methods_label") or (", ".join(p["methods"]).capitalize() if p["methods"] else none))]
     if p["losses_n"]:
-        rows.append(("Money lost", f"{fmt_rupees(p['losses_total'])} across {p['losses_n']} case{'s' if p['losses_n'] != 1 else ''}"))
-    rows.append(("Evidence", f"{p['evidence_grade']}: {p['evidence_text']}"))
+        rows.append(("Money lost", p.get("losses_label") or f"{fmt_rupees(p['losses_total'])} across {p['losses_n']} case{'s' if p['losses_n'] != 1 else ''}"))
+    rows.append(("Evidence", f"{p.get('evidence_grade_label', p['evidence_grade'])}: {p['evidence_text']}"))
     glance = "".join(f"<dt>{k}</dt><dd>{e(v)}</dd>" for k, v in rows)
+    n_ev = len(p["evidence"])
+    ev_sum = L(f'All {n_ev} incident{"s" if n_ev != 1 else ""} this is based on', f"ఈ అంచనాకు ఆధారమైన {n_ev} ఘటనలు")
     return f"""<article class="pred">
 <div class="pred-top"><div><h4>{e(p["headline"])}</h4>
 <span class="grade g-{p["evidence_grade"]}">Evidence: {p["evidence_grade"]}</span>{arrow}</div>
@@ -292,7 +316,7 @@ def _pred_card(p) -> str:
 {chance}
 {f'<p class="focus"><b>Suggested focus:</b> {e(p["focus"])}.</p>' if p["focus"] else ''}
 <details class="whyd"><summary>Why this is predicted</summary><ul>{"".join(f"<li>{e(w)}</li>" for w in p["why"])}</ul></details>
-{f'<details class="ev"><summary>All {len(p["evidence"])} incident{"s" if len(p["evidence"]) != 1 else ""} this is based on</summary>{ev}</details>' if ev else ''}
+{f'<details class="ev"><summary>{ev_sum}</summary>{ev}</details>' if ev else ''}
 </article>"""
 
 
@@ -339,17 +363,17 @@ def _item_card(lead: NewsItem, dupes: list[NewsItem]) -> str:
     if dupes:
         srcs = sorted({d.source for d in dupes if d.source != lead.source})
         if srcs:
-            also = f'<div class="also">Also reported by {e(", ".join(srcs[:6]))}</div>'
+            also = f'<div class="also">Also reported by {news(e(", ".join(srcs[:6])))}</div>'
     search = " ".join([lead.title, summary, where] + lead.categories).lower()
     return f"""<article class="item" style="border-left-color:{color}"
  data-ts="{int(lead.published.timestamp())}" data-sev="{lead.severity}"
  data-state="{e(lead.state)}" data-districts="{e('|'.join(lead.districts))}"
- data-areas="{e('|'.join(lead.areas))}" data-cats="{e('|'.join(lead.categories))}" data-q="{e(search)}">
-<h4><a href="{e(lead.link)}" target="_blank" rel="noopener">{e(lead.title)}</a></h4>
+ data-areas="{e('|'.join(lead.areas))}" data-cats="{e('|'.join(lead.categories))}" data-q="{news(e(search))}">
+<h4><a href="{e(lead.link)}" target="_blank" rel="noopener">{news(e(lead.title))}</a></h4>
 <div class="meta"><span class="sev" style="color:{color}">{SEV_LABEL[lead.severity]}</span><span>{e(where)}</span>
-<span>{e(lead.source)}</span><span>{local(lead.published):%d %b, %H:%M} IST</span></div>
+<span>{news(e(lead.source))}</span><span>{local(lead.published):%d %b, %H:%M} IST</span></div>
 <div>{tags}</div>
-{f'<p class="summary">{e(summary)}</p>' if summary else ''}{also}
+{f'<p class="summary">{news(e(summary))}</p>' if summary else ''}{also}
 </article>"""
 
 
@@ -448,6 +472,18 @@ $$('dialog').forEach(d => {
 });
 const start = readHash(); apply();
 if (start) openDialog(start, null);
+// language toggle: keep the open pop-up and filters, remember the choice
+$$('.lang a').forEach(a => a.addEventListener('click', () => {
+  try { localStorage.setItem('lang', a.dataset.lang); } catch (e) {}
+  a.href = a.getAttribute('href') + location.hash;
+}));
+try {
+  const want = localStorage.getItem('lang');
+  if (want && want !== document.documentElement.lang) {
+    const a = document.querySelector('.lang a[data-lang="' + want + '"]');
+    if (a) location.replace(a.getAttribute('href') + location.hash);
+  }
+} catch (e) {}
 addEventListener('hashchange', () => { const t = readHash(); apply(); if (t && t !== openTile) openDialog(t, null); });
 
 """
@@ -467,13 +503,32 @@ setInterval(async () => {
 
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
            emerging, now: datetime, hours: int, demo: bool, outlook=None, record=None,
-           city_key: str = config.DEFAULT_CITY) -> str:
+           city_key: str = config.DEFAULT_CITY, lang: str = "en") -> str:
+    global _LANG
+    _LANG = lang
+    try:
+        return i18n.translate_page(_render(**locals_for_render(locals())), lang)
+    finally:
+        _LANG = "en"
+
+
+def locals_for_render(ns):
+    return {k: ns[k] for k in ("items", "clusters", "trends", "hotspots", "emerging", "now", "hours", "demo",
+                               "outlook", "record", "city_key")}
+
+
+def _render(*, items, clusters, trends, hotspots, emerging, now, hours, demo, outlook, record, city_key) -> str:
     city = config.CITIES[city_key]
     cname, core = city["name"], city["core"]
     around = [d for d in city["districts"] if d != core]
-    region_text = f"{city['full']} city and the surrounding {', '.join(around[:-1])} and {around[-1]} districts" if len(around) > 1 else city["full"]
+    region_text = (L(f"{city['full']} city and the surrounding {', '.join(around[:-1])} and {around[-1]} districts",
+                     f"{city['full']} నగరం, పరిసర {', '.join(around)} జిల్లాలు")
+                   if len(around) > 1 else city["full"])
+    sfx = ".te.html" if _LANG == "te" else ".html"
+    page_of = lambda k, lang: (("./" if lang == "en" else "te.html") if k == config.DEFAULT_CITY
+                               else k + (".te.html" if lang == "te" else ".html"))
     city_nav = "".join(
-        (f'<a class="city{" on" if k == city_key else ""}" href="{"./" if k == config.DEFAULT_CITY else k + ".html"}"'
+        (f'<a class="city{" on" if k == city_key else ""}" href="{page_of(k, _LANG)}"'
          f'{" aria-current=\"page\"" if k == city_key else ""}>{e(c["name"])}</a>') if c["enabled"] else
         f'<span class="city soon" aria-disabled="true">{e(c["name"])} <small>coming soon</small></span>'
         for k, c in config.CITIES.items())
@@ -525,7 +580,7 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
 
     scams_body = ("<p class='meta' style='margin-top:0'>Scam and crime techniques mentioned in the news this week. "
                   "<b>New</b> means not seen in the previous week.</p><div class='chips'>" + "".join(
-        f'<span class="chip-s{" hot" if t["new"] else ""}">{e(t["term"])}: {t["count"]}{" (new)" if t["new"] else ""}</span>'
+        f'<span class="chip-s{" hot" if t["new"] else ""}">{e(_term(t["term"]))}: {t["count"]}{L(" (new)", " (కొత్తది)") if t["new"] else ""}</span>'
         for t in emerging) + "</div>") if emerging else "<p class='meta'>No known techniques mentioned this week.</p>"
 
     trends_body = watch_body = areas_body = ""
@@ -545,19 +600,38 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
                                  outlook.forecast_days(outlook.by_cat[r["key"]]), width=240, height=90, compact=True)
             + "</div>" for r in outlook.category_rows(top=8))
         trends_body = f"""<p class="note" style="margin-top:0">Outlook confidence <span class="conf">{outlook.conf}</span>
-{conf_text} Based on {outlook.n_reliable} reliable day{'s' if outlook.n_reliable != 1 else ''}; Medium from 7, High from 21.
-The outlook estimates how many <b>news-reported</b> incidents to expect. It is a planning aid, not a prediction of specific crimes.</p>
+{conf_text} {L(f"Based on {outlook.n_reliable} reliable day{'s' if outlook.n_reliable != 1 else ''}; Medium from 7, High from 21. The outlook estimates how many <b>news-reported</b> incidents to expect. It is a planning aid, not a prediction of specific crimes.",
+ f"{outlook.n_reliable} విశ్వసనీయ రోజుల ఆధారంగా; 7 రోజుల తర్వాత మధ్యస్థం, 21 తర్వాత ఎక్కువ. ఈ అంచనా <b>వార్తల్లో నమోదయ్యే</b> ఘటనల సంఖ్యను మాత్రమే సూచిస్తుంది. ఇది ప్రణాళిక కోసం సహాయం మాత్రమే, నిర్దిష్ట నేరాల అంచనా కాదు.")}</p>
 <div class="viz"><h3>Incidents per day in and around {e(cname)}</h3>
 <p class="sub">Last 30 days and the next 7. Next week: about {total['expected']:.0f} incidents (likely {total['low']}–{total['high']}), {_arrow(total)}</p>
 {charts.LEGEND}<div class="scroll">{charts.daily_chart(hist, fc)}</div>
 <details class="dt"><summary>Show data table</summary><table><tr><th>Day</th><th class=num>Incidents</th><th>Note</th></tr>{data_rows}</table></details></div>
 <h3>By category, last 14 days and next 7</h3><div class="sm">{small or '<p class="meta">Not enough data yet.</p>'}</div>"""
         allp = predictions(outlook, 8)
-        insights = city_insights(outlook, allp, city)
+        insights = (i18n.te_city_insights(city_facts(outlook, allp, city)) if _LANG == "te"
+                    else city_insights(outlook, allp, city))
+        if _LANG == "te":
+            allp = [i18n.te_prediction(p) for p in allp]
         watch_body = (f'<div class="brief"><h3>Key insights for {e(cname)}</h3><ul>'
                       + "".join(f"<li>{e(x)}</li>" for x in insights) + "</ul></div>"
                       + _record_html(record, outlook.conf)
-                      + f"""<details class="method"><summary>Method, sources and limits</summary>
+                      + (f"""<details class="method"><summary>Method, sources and limits</summary>
+<h5>ఏం అంచనా వేస్తున్నాం</h5><p>వచ్చే 7 రోజుల్లో ఒక జిల్లా నుంచి ఒక రకం నేరానికి సంబంధించి <b>వార్తల్లో ఎన్ని ఘటనలు నమోదవుతాయో</b>.
+నిర్దిష్ట నేరాలు, వ్యక్తులు లేదా ప్రదేశాలు కాదు.</p>
+<h5>మూలాలు</h5><ul>{_sources_list()}</ul>
+<h5>పద్ధతి</h5><ol>
+<li>ప్రతి గంటకు వార్తలు సేకరించి, స్థిరమైన కీవర్డ్ నియమాలతో (కోడ్‌లో ప్రచురించినవి) నేర రకం, ప్రదేశం గుర్తిస్తాం; ఒకే ఘటనపై వేర్వేరు సంస్థల వార్తలను ఒకటిగా కలుపుతాం.</li>
+<li>ప్రతి నేర రకం, జిల్లాకు: ఇటీవలి రోజువారీ సగటు (కొత్త రోజులకు ఎక్కువ బరువు); చరిత్ర తక్కువగా ఉన్నప్పుడు జిల్లా దీర్ఘకాలిక వాటా వైపు సర్దుబాటు.</li>
+<li>అంచనా = రోజువారీ సగటు x 7 (10+ రోజుల తర్వాత ధోరణితో గుణించి). పరిధి = ఆ అంచనాతో Poisson లెక్కలో 80% పరిధి.</li>
+<li>ఆధారం: బలమైనది = 3+ వేర్వేరు సంస్థలు, 3+ వేర్వేరు రోజుల్లో 5+ ఘటనలు. మోస్తరు = 2+ సంస్థల నుంచి 3+ ఘటనలు. పరిమితం = అంతకంటే తక్కువ.</li>
+<li>ప్రతి అంచనాను రోజూ సేవ్ చేసి, వారం తర్వాత ఫలితంతో పోలుస్తాం (పై ట్రాక్ రికార్డ్).</li>
+<li>కనీసం ఒక ఘటన జరిగే అవకాశం శాతం 7 రోజుల పర్యవేక్షణ తర్వాత, ఆధారం మోస్తరు లేదా బలమైనది అయితేనే చూపిస్తాం.</li></ol>
+<h5>పరిమితులు</h5><ul>
+<li>పత్రికలు ప్రచురించినవే కనిపిస్తాయి. నివేదించని నేరాలు ఇక్కడ కనిపించవు.</li>
+<li>పరిధి: {e(region_text)}. ప్రదేశం అంటే వార్తలో ఘటన జరిగినట్లు లేదా ప్రకటించినట్లు చెప్పిన చోటు.</li>
+<li>పర్యవేక్షణ మొదలైంది {outlook.reliable_from + timedelta(days=2):%d %b %Y}; విశ్వసనీయత <b>{i18n.CONF_TE[outlook.conf]}</b> ({outlook.n_reliable} రోజులు). 7 రోజుల తర్వాత మధ్యస్థం, 21 తర్వాత ఎక్కువ.</li></ul>
+<h5>ఎలా ధృవీకరించాలి</h5><p>ప్రతి కార్డులో దానికి ఆధారమైన ప్రతి ఘటన, అసలు వార్తల లింకులు, ఇతర సంస్థల వివరాలు ఉన్నాయి.</p>
+</details>""" if _LANG == "te" else f"""<details class="method"><summary>Method, sources and limits</summary>
 <h5>What is predicted</h5><p>How many incidents of a crime type will be <b>reported in the news</b> from a district in the next 7 days.
 Not specific crimes, people or places.</p>
 <h5>Sources</h5><ul>{_sources_list()}</ul>
@@ -573,7 +647,7 @@ Not specific crimes, people or places.</p>
 <li>Covers {e(region_text)}. The place is where the story says it happened or was announced.</li>
 <li>Monitoring started {outlook.reliable_from + timedelta(days=2):%d %b %Y}; confidence is <b>{outlook.conf}</b> ({outlook.n_reliable} days). Medium from 7 days, High from 21.</li></ul>
 <h5>How to verify</h5><p>Each card lists every incident it is based on, with links to the original reports and other outlets that covered it.</p>
-</details>"""
+</details>""")
                       + f"<h3>Predictions for the next 7 days</h3>"
                       + "<p class='meta' style='margin-top:-4px'>Strongest evidence first. Limited means fewer than 3 incidents "
                         "or a single outlet: worth watching, not acting on alone.</p>"
@@ -596,9 +670,11 @@ Not specific crimes, people or places.</p>
 <div class="catstrip">{"".join(f'<div><b>~{r["expected"]:.0f}</b>{e(r["key"])} next week</div>' for r in outlook.category_rows(top=3))}</div>""",
                          "t-trends", "Open charts")
         tp = predictions(outlook, 3)
+        if _LANG == "te":
+            tp = [i18n.te_prediction(p) for p in tp]
         t_watch = _tile("watch", "target", "Predictions",
                         ('<ul class="heads">' + "".join(
-                            f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p["category"].lower())}</b>'
+                            f'<li><i style="background:#2a78d6"></i><div><b>~{p["expected"]:.0f} {e(p.get("category_label") or p["category"].lower())}</b>'
                             f'<span>{e(p["where_short"])} · evidence {p["evidence_grade"].lower()}</span></div></li>'
                             for p in tp) + "</ul><p>Next 7 days. Open for insights: type, where, who, why.</p>")
                         if tp else '<p class="empty-t">Builds up as incidents come in.</p>')
@@ -610,7 +686,7 @@ Not specific crimes, people or places.</p>
         t_trends = t_watch = t_areas = ""
 
     heads = "".join(
-        f'<li><i style="background:{SEV_COLOR[cl[0].severity]}"></i><div>{e(cl[0].title[:110])}'
+        f'<li><i style="background:{SEV_COLOR[cl[0].severity]}"></i><div>{news(e(cl[0].title[:110]))}'
         f'<span>{e(", ".join(cl[0].areas + cl[0].districts) or cl[0].state)}, {local(cl[0].published):%H:%M}</span></div></li>'
         for cl in day[:5])
     t_inc = _tile("incidents", "list", "Live incidents",
@@ -627,7 +703,7 @@ Not specific crimes, people or places.</p>
     t_vizag = (f'<div class="tile" role="button" tabindex="0" aria-label="{e(core)} city: open" data-open="incidents" data-preset=\'{{"district":"{e(core)}","win":"168"}}\' aria-haspopup="dialog">'
                f'<div class="hd">{icon("pin")}<h2>{e(core)} city</h2></div>'
                f'<div class="lead">{len(vizag)}<small>incidents in 7 days</small></div>'
-               + (f"<p>Latest: {e(vz_latest)}</p>" if vz_latest else f"<p>No incidents in {e(core)} city this week.</p>")
+               + (f"<p>Latest: {news(e(vz_latest))}</p>" if vz_latest else f"<p>No incidents in {e(core)} city this week.</p>")
                + (f"<p>Areas: {e(vz_top)}</p>" if vz_top else "") + "</div>")
 
     t_dist = _tile("districts", "eye", f"In and around {cname}",
@@ -640,7 +716,7 @@ Not specific crimes, people or places.</p>
                     if building else f'<div class="lead">{ups}<small>spike{"s" if ups != 1 else ""} this week</small></div>'
                     '<p>This week against last week, by category and state</p>'))
     t_scams = _tile("scams", "hook", "Scam techniques",
-                    ('<div class="chips">' + "".join(f'<span class="chip-s{" hot" if t["new"] else ""}">{e(t["term"])}</span>'
+                    ('<div class="chips">' + "".join(f'<span class="chip-s{" hot" if t["new"] else ""}">{e(_term(t["term"]))}</span>'
                                                      for t in emerging[:7]) + "</div><p>Mentioned in this week's news</p>")
                     if emerging else '<p class="empty-t">None mentioned this week.</p>')
 
@@ -663,15 +739,17 @@ Not specific crimes, people or places.</p>
     })
     spike_n = sum(1 for t in trends if t["spike"])
 
-    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+    return f"""<!DOCTYPE html><html lang="{_LANG}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(cname)} crime and threat board, {local(now):%d %b %Y}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=Noto+Sans+Telugu:wght@400;500;600&display=swap" rel="stylesheet">
 <style>{CSS}</style></head><body>
 <header class="board"><div class="board-in">
 <div class="top"><div class="emblem">{icon("eye", 24)}</div>
-<div class="title"><h1>{e(cname)} crime and threat board</h1><p>Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.</p></div>
+<div class="title"><h1>{e(cname)} crime and threat board</h1><p>{L(f"Incidents reported in {e(region_text)}, from public news. Updated {local(now):%d %b %Y, %H:%M} IST, every hour.",
+ f"{e(region_text)}లో నమోదైన ఘటనలు, బహిరంగ వార్తల ఆధారంగా. చివరి అప్‌డేట్ {local(now):%d %b %Y, %H:%M} IST; ప్రతి గంటకు.")}</p></div>
+<nav class="lang" aria-label="Language"><a href="{page_of(city_key, 'en')}" data-lang="en"{' class="on" aria-current="true"' if _LANG == "en" else ''}>English</a><a href="{page_of(city_key, 'te')}" data-lang="te"{' class="on" aria-current="true"' if _LANG == "te" else ''}>తెలుగు</a></nav>
 </div>
 <nav class="cities" aria-label="City">{city_nav}</nav>
 <div class="counters">
@@ -685,7 +763,7 @@ Not specific crimes, people or places.</p>
 {t_trends}{t_inc}{t_vizag}{t_watch}{t_dist}{t_areas}{t_week}{t_scams}
 </div></main>
 {dialogs}
-<footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate.
+<footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate. News headlines are shown as published.
 {f'{spike_n} category spike{"s" if spike_n != 1 else ""} this week. ' if spike_n else ''}Data: <a href="incidents.json">incidents.json</a>, <a href="outlook.json">outlook.json</a></footer>
 <script>{_JS.replace("__CFG__", cfg)}{_RELOAD_JS}</script>
 <script>{charts.TIP_JS}</script>

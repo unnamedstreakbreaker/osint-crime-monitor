@@ -174,6 +174,11 @@ def explain(o, key, row) -> dict:
         "why": why,
         "where": where,
         "places": [n for n, _ in places.most_common(5)],
+        "facts": {"n7": n7, "n30": len(leads), "rank": rank, "nranking": len(ranking),
+                  "next": (ranking[1], per_dist[ranking[1]]) if rank == 1 and len(ranking) > 1 else None,
+                  "last3": last3, "prev4": prev4, "share": share, "cat_total_30": cat_total_30,
+                  "methods": methods, "where_list": [(n, c) for n, c in places.most_common(5)],
+                  "unspecified": unspecified, "conf": o.conf, "trend": row["trend"], "ev": ev},
         "evidence": [{"title": l.title, "link": l.link, "source": l.source,
                       "when": l.published.astimezone(o.tz).strftime("%d %b"),
                       "place": ", ".join(n for d, n in l.places if d == dist) or dist,
@@ -339,44 +344,53 @@ def enrich(o, p) -> dict:
     return p
 
 
-def city_insights(o, preds, city) -> list[str]:
-    """A short briefing: what dominates, where, who, how much, and what changed."""
+def city_facts(o, preds, city) -> dict:
     today = o.today
     leads7 = [cl[0] for cl in o.clusters_of.values()
               if cl[0].categories and (today - cl[0].published.astimezone(o.tz).date()).days < 7]
+    f = {"city": city["name"], "n": len(leads7)}
     if not leads7:
+        return f
+    cats = Counter(l.categories[0] for l in leads7).most_common()
+    top_n = cats[0][1]
+    f["leaders"] = [c for c, k in cats if k == top_n]
+    f["top_n"] = top_n
+    f["rest"] = [(c, k) for c, k in cats if k < top_n][:3]
+    f["places"] = Counter(name for l in leads7 for d, name in l.places).most_common(4)
+    dists = Counter(d for l in leads7 for d in l.districts if d in city["districts"]).most_common()
+    f["dists"] = dists if len(dists) > 1 else []
+    f["victims"] = profile(leads7)["victims"]
+    cp = profile([l for l in leads7 if l.categories[0] == "Cyber fraud"])
+    f["losses"] = cp["losses"]
+    f["top"] = preds[0] if preds else None
+    return f
+
+
+def city_insights(o, preds, city) -> list[str]:
+    """A short briefing: what dominates, where, who, how much, and what changed."""
+    f = city_facts(o, preds, city)
+    if not f["n"]:
         return [f"No incidents reported in and around {city['name']} in the last 7 days."]
-    out = []
-    n = len(leads7)
-    cats = Counter(l.categories[0] for l in leads7)
-    ranked = cats.most_common()
-    top_n = ranked[0][1]
-    leaders = [c for c, k in ranked if k == top_n]
-    rest = [(c, k) for c, k in ranked if k < top_n]
+    n, top_n, leaders, rest = f["n"], f["top_n"], f["leaders"], f["rest"]
     line = f"{n} incidents reported in and around {city['name']} this week. "
     if len(leaders) == 1:
         line += f"{leaders[0]} leads with {top_n} ({top_n / n * 100:.0f}%)"
     else:
         line += (", ".join(leaders[:-1]) + f" and {leaders[-1].lower()} are level with {top_n} each").capitalize()
     if rest:
-        line += ("; then " if len(leaders) > 1 else ", followed by ") + ", ".join(f"{c.lower()} ({k})" for c, k in rest[:3])
-    out.append(line + ".")
-    places = Counter(name for l in leads7 for d, name in l.places)
-    if places:
-        out.append("Localities named most often: " + ", ".join(f"{p} ({k})" if k > 1 else p for p, k in places.most_common(4)) + ".")
-    dists = Counter(d for l in leads7 for d in l.districts if d in city["districts"])
-    if len(dists) > 1:
-        out.append("By district: " + ", ".join(f"{d} {k}" for d, k in dists.most_common()) + ".")
-    prof = profile(leads7)
-    if prof["victims"]:
-        out.append("Most often targeted or affected: " + ", ".join(prof["victims"]) + ".")
-    cyber = [l for l in leads7 if l.categories[0] == "Cyber fraud"]
-    cp = profile(cyber)
-    if cp["losses"]:
-        out.append(f"Cyber fraud losses named in reports: {fmt_rupees(sum(cp['losses']))} across {len(cp['losses'])} case"
-                   f"{'s' if len(cp['losses']) != 1 else ''}; the largest single loss was {fmt_rupees(max(cp['losses']))}.")
-    if preds:
-        top = preds[0]
+        line += ("; then " if len(leaders) > 1 else ", followed by ") + ", ".join(f"{c.lower()} ({k})" for c, k in rest)
+    out = [line + "."]
+    if f["places"]:
+        out.append("Localities named most often: " + ", ".join(f"{p} ({k})" if k > 1 else p for p, k in f["places"]) + ".")
+    if f["dists"]:
+        out.append("By district: " + ", ".join(f"{d} {k}" for d, k in f["dists"]) + ".")
+    if f["victims"]:
+        out.append("Most often targeted or affected: " + ", ".join(f["victims"]) + ".")
+    if f["losses"]:
+        out.append(f"Cyber fraud losses named in reports: {fmt_rupees(sum(f['losses']))} across {len(f['losses'])} case"
+                   f"{'s' if len(f['losses']) != 1 else ''}; the largest single loss was {fmt_rupees(max(f['losses']))}.")
+    top = f["top"]
+    if top:
         out.append(f"Most likely next week: {top['category'].lower()} {('around ' + ', '.join(top['places'][:2])) if top['places'] else 'in ' + top['district']} "
                    f"(about {top['expected']:.0f}, evidence {top['evidence_grade'].lower()}).")
     return out

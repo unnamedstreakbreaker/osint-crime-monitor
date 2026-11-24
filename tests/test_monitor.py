@@ -195,3 +195,28 @@ class ExplainTests(unittest.TestCase):
         self.assertEqual(tr["recent"][0]["actual"], 4)      # cases on 17, 18, 19, 20 Nov
         self.assertTrue(tr["recent"][0]["hit"])
         self.assertEqual(all_for_log(o)[0]["category"], "*")
+
+
+class TeluguTests(unittest.TestCase):
+    def test_news_headlines_untouched_and_labels_translated(self):
+        from osint_monitor.i18n import translate_page, news
+        html = f'<h2>Predictions</h2><h4>{news("Road accidents rise in Vizag")}</h4><script>var x="Predictions"</script>'
+        out = translate_page(html, "te")
+        self.assertIn("అంచనాలు", out)                          # label translated
+        self.assertIn("Road accidents rise in Vizag", out)      # headline kept as published
+        self.assertIn('var x="Predictions"', out)               # scripts untouched
+        self.assertNotIn("\x00", out)
+
+    def test_prediction_text_in_telugu(self):
+        from datetime import timezone as tz
+        from osint_monitor.forecast import Outlook
+        from osint_monitor.explain import predictions
+        from osint_monitor.i18n import te_prediction
+        now = datetime(2026, 11, 23, 12, tzinfo=tz.utc)
+        items = [classify(item(f"Gajuwaka retiree loses Rs {k + 5} lakh in digital arrest scam", 6 + k * 20, now=now))
+                 for k in range(4)]
+        o = Outlook({i.item_id: [i] for i in items}, (now - timedelta(days=3)).date(), now.date(), tz.utc)
+        p = te_prediction(predictions(o, 1)[0])
+        self.assertEqual(p["headline"], "Visakhapatnamలో సైబర్ మోసం")
+        self.assertIn("డిజిటల్ అరెస్ట్", p["insight"])
+        self.assertIn("Gajuwaka", p["where"])
