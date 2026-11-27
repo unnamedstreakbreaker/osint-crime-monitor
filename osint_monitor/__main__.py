@@ -132,10 +132,14 @@ def main(argv=None) -> int:
         log_rows.append({"category": "*", "district": f"city:{key}", **outlook.project(outlook.total), "evidence": ""})
         record = track_record(store, outlook, districts=cdists, city=key)
 
+        weekly_rep = None
+        if not args.demo:
+            from .weekly import build as build_weekly
+            weekly_rep = build_weekly(db_path, key, now)
         for lang in ("en", "te"):
             page = report.render(record=record, items=c_items, clusters=c_clusters, trends=trends, hotspots=hotspots,
                                  emerging=emerging, now=now, hours=args.hours, demo=args.demo, outlook=outlook,
-                                 city_key=key, lang=lang)
+                                 city_key=key, lang=lang, weekly=weekly_rep)
             if key == config.DEFAULT_CITY:
                 path = out if lang == "en" else os.path.join(out_dir, "te.html")
             else:
@@ -146,6 +150,9 @@ def main(argv=None) -> int:
         if key != config.DEFAULT_CITY:
             continue
         default_out = (c_clusters, outlook, record)
+        if weekly_rep:
+            with open(os.path.join(out_dir, "weekly.json"), "w", encoding="utf-8") as fh:
+                json.dump(weekly_rep, fh, indent=2, ensure_ascii=False)
 
         def _rows(rows):
             return [{"name": r["key"] if isinstance(r["key"], str) else " in ".join(r["key"]),

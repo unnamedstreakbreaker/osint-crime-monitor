@@ -365,6 +365,67 @@ def _pred_card(p) -> str:
 </article>"""
 
 
+def _weekly_body(w) -> str:
+    """Pop-up content for the weekly scorecard."""
+    d = lambda iso: f"{datetime.fromisoformat(iso).day} {datetime.fromisoformat(iso):%b}"
+    intro = L("Every Tuesday's predictions cover the next 7 days (Wednesday to Tuesday). Once that week is over, each one is "
+              "checked against what was actually reported. Results are shown here whether they are good or bad.",
+              "ప్రతి మంగళవారం చేసిన అంచనాలు తర్వాతి 7 రోజులకు (బుధవారం నుంచి మంగళవారం). ఆ వారం ముగిశాక, ప్రతిదాన్ని నిజంగా "
+              "నమోదైన ఘటనలతో పోలుస్తాం. ఫలితం బాగున్నా బాగోకపోయినా ఇక్కడ చూపిస్తాం.")
+    nxt = "".join(f"<li><b>{e(i18n.cat(p['name'].split(' in ')[0]) + ' (' + p['name'].split(' in ')[-1] + ')' if _LANG == 'te' else p['name'])}</b>: "
+                  f"~{p['expected']:.0f} ({p['range'][0]}–{p['range'][1]}), "
+                  f"{L('evidence', 'ఆధారం')} {e(i18n.GRADE_TE[p['evidence']] if _LANG == 'te' else p['evidence'].lower())}</li>"
+                  for p in w.get("next_week", []))
+    nxt_html = f"<h3>{L('Predictions for the next 7 days', 'వచ్చే 7 రోజుల అంచనాలు')}</h3><ul>{nxt}</ul>" if nxt else ""
+    if not w.get("made_on"):
+        when = d(w["first_scorecard"]) if w.get("first_scorecard") else L("one week after the first prediction", "మొదటి అంచనా తర్వాత ఒక వారం")
+        return (f'<div class="record"><b>{L("First scorecard on", "మొదటి స్కోర్‌కార్డ్:")} {when}.</b>'
+                f'<p>{intro}</p></div>{nxt_html}')
+    cs, ss, h = w["city_summary"], w["state_summary"], w["happened"]
+    win = f"{d(w['window'][0])}–{d(w['window'][1])}"
+    verdict_txt = {"inside": L("Inside range", "పరిధిలోనే"), "above": L("Above range", "పరిధి కంటే ఎక్కువ"),
+                   "below": L("Below range", "పరిధి కంటే తక్కువ")}
+    def rname(r):
+        if r["category"] == "*":
+            return L(f"All incidents, {w['city']}", f"మొత్తం ఘటనలు, {w['city']}")
+        return _name((r["category"], r["district"]))
+    rows = "".join(
+        f'<tr><td>{e(rname(r))}</td><td>{e(i18n.GRADE_TE.get(r["evidence"], "") if _LANG == "te" else r["evidence"])}</td>'
+        f'<td class=num>~{r["expected"]:.0f} ({r["low"]}–{r["high"]})</td><td class=num><b>{r["actual"]}</b></td>'
+        f'<td class=num>{r["naive"]}</td><td class="{"hit" if r["verdict"] == "inside" else "miss"}">{verdict_txt[r["verdict"]]}'
+        f'{" *" if r["trivial"] else ""}</td></tr>' for r in w["city_rows"])
+    better = cs["n"] and cs["error_model"] < cs["error_naive"]
+    hist = "".join(f'<tr><td>{d(x["made_on"])}</td><td class=num>{x["city_inside"]} / {x["city_n"]}</td>'
+                   f'<td class=num>{x["inside"]} / {x["n"]}</td></tr>' for x in w["history"])
+    happened = ", ".join(f"{e(i18n.cat(c) if _LANG == 'te' else c)} {n} ({L('previous week', 'గత వారం')} {p})" for c, n, p in h["by_category"])
+    tops = "".join(f'<a href="{e(t["link"])}" target="_blank" rel="noopener">{news(e(t["title"]))} <span>({d(t["date"])})</span></a>'
+                   for t in h["top"])
+    ss_in, ss_n = ss["inside"], ss["n"]
+    ss_line = (f"<li>{L(f'Rest of AP and Telangana: {ss_in} of {ss_n} inside range.', f'మిగతా AP, తెలంగాణ: {ss_n}లో {ss_in} పరిధిలోనే.')}</li>"
+               if ss_n else "")
+    return f"""<div class="brief"><h3>{L(f"Week {win}", f"వారం {win}")}</h3><ul>
+<li>{L(f"{cs['inside']} of {cs['n']} {w['city']} predictions landed inside their stated range", f"{w['city']} అంచనాల్లో {cs['n']}లో {cs['inside']} చెప్పిన పరిధిలోనే వచ్చాయి")}
+{L(f"({cs['trivial']} only because nothing happened and the range started at 0).", f"(వీటిలో {cs['trivial']} ఏమీ జరగకపోవడం వల్ల, పరిధి 0 నుంచి మొదలైనందున).") if cs['trivial'] else ""}</li>
+<li>{L(f"Expected {cs['expected_total']:.0f} incidents in total; {cs['actual_total']} were reported.", f"మొత్తం {cs['expected_total']:.0f} ఘటనలు అంచనా; {cs['actual_total']} నమోదయ్యాయి.")}</li>
+<li>{L(f"Accuracy: off by {cs['error_model']:.1f} incidents per prediction on average. Simply repeating last week's count would have been off by {cs['error_naive']:.1f}, so "
+      + ("our predictions did better." if better else "the simple guess did as well or better this week."),
+      f"ఖచ్చితత్వం: ప్రతి అంచనాలో సగటున {cs['error_model']:.1f} ఘటనల తేడా. గత వారం సంఖ్యనే మళ్లీ చెప్పి ఉంటే తేడా {cs['error_naive']:.1f}; "
+      + ("మా అంచనాలు మెరుగ్గా ఉన్నాయి." if better else "ఈ వారం సాధారణ అంచనానే సమానంగా లేదా మెరుగ్గా ఉంది."))}</li>
+{ss_line}
+</ul></div>
+<p class="meta">{intro}</p>
+<h3>{L(f"Each {w['city']} prediction against what happened", f"ప్రతి {w['city']} అంచనా, జరిగిన దానితో పోలిక")}</h3>
+<table><tr><th>{L("Prediction", "అంచనా")}</th><th>{L("Evidence", "ఆధారం")}</th><th class=num>{L("Predicted", "అంచనా వేసింది")}</th>
+<th class=num>{L("Actual", "జరిగింది")}</th><th class=num>{L("Simple guess", "సాధారణ అంచనా")}</th><th>{L("Result", "ఫలితం")}</th></tr>{rows}</table>
+<p class="meta">{L("Simple guess = the same count as the week before. * = inside range only because nothing happened and the range started at 0.",
+                 "సాధారణ అంచనా = అంతకుముందు వారం సంఖ్యే. * = ఏమీ జరగకపోవడం వల్ల మాత్రమే పరిధిలో ఉంది (పరిధి 0 నుంచి).")}</p>
+<h3>{L(f"What actually happened in {w['city']}", f"{w['city']}లో నిజంగా జరిగింది")}</h3>
+<p>{L(f"{h['total']} incidents (previous week {h['previous_total']})", f"{h['total']} ఘటనలు (గత వారం {h['previous_total']})")}{": " + happened if happened else ""}.</p>
+{f'<div class="ev">{tops}</div>' if tops else ""}
+{f'<h3>{L("Running score", "ఇప్పటివరకు మొత్తం స్కోర్")}</h3><table><tr><th>{L("Predictions made", "అంచనా తేదీ")}</th><th class=num>{w["city"]}</th><th class=num>{L("All", "మొత్తం")}</th></tr>{hist}</table>' if hist else ""}
+{nxt_html}"""
+
+
 def _sources_list() -> str:
     out = []
     for name, url in config.FEEDS.items():
@@ -548,7 +609,7 @@ setInterval(async () => {
 
 def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends, hotspots,
            emerging, now: datetime, hours: int, demo: bool, outlook=None, record=None,
-           city_key: str = config.DEFAULT_CITY, lang: str = "en") -> str:
+           city_key: str = config.DEFAULT_CITY, lang: str = "en", weekly=None) -> str:
     global _LANG
     _LANG = lang
     try:
@@ -559,7 +620,7 @@ def render(*, items: list[NewsItem], clusters: dict[str, list[NewsItem]], trends
 
 def locals_for_render(ns):
     return {k: ns[k] for k in ("items", "clusters", "trends", "hotspots", "emerging", "now", "hours", "demo",
-                               "outlook", "record", "city_key")}
+                               "outlook", "record", "city_key", "weekly")}
 
 
 _AGO_JS = r"""
@@ -600,7 +661,7 @@ if (standalone) document.documentElement.classList.add('app');
 """
 
 
-def _render(*, items, clusters, trends, hotspots, emerging, now, hours, demo, outlook, record, city_key) -> str:
+def _render(*, items, clusters, trends, hotspots, emerging, now, hours, demo, outlook, record, city_key, weekly=None) -> str:
     city = config.CITIES[city_key]
     cname, core = city["name"], city["core"]
     around = [d for d in city["districts"] if d != core]
@@ -803,7 +864,23 @@ Not specific crimes, people or places.</p>
                                                      for t in emerging[:7]) + "</div><p>Mentioned in this week's news</p>")
                     if emerging else '<p class="empty-t">None mentioned this week.</p>')
 
+    if weekly and weekly.get("made_on"):
+        cs = weekly["city_summary"]
+        better = cs["n"] and cs["error_model"] < cs["error_naive"]
+        wk_body = (f'<div class="lead">{cs["inside"]}/{cs["n"]}<small>{L("inside range last week", "గత వారం పరిధిలోనే")}</small></div>'
+                   f'<p>{L("Beat the simple guess" if better else "Did not beat the simple guess",
+                           "సాధారణ అంచనా కంటే మెరుగు" if better else "సాధారణ అంచనాను మించలేదు")}</p>')
+    elif weekly:
+        fs = weekly.get("first_scorecard")
+        wk_body = (f'<div class="lead">{datetime.fromisoformat(fs).day} {datetime.fromisoformat(fs):%b}<small>{L("first scorecard", "మొదటి స్కోర్‌కార్డ్")}</small></div>'
+                   f'<p>{L("Did the predictions come true? Checked every week.", "అంచనాలు నిజమయ్యాయా? ప్రతి వారం పరిశీలన.")}</p>') if fs else ""
+    else:
+        wk_body = ""
+    t_score = _tile("score", "target", L("Weekly scorecard", "వారపు స్కోర్‌కార్డ్"), wk_body) if wk_body else ""
+
     dialogs = "".join([
+        _dialog("score", "target", L("Weekly scorecard", "వారపు స్కోర్‌కార్డ్"),
+                L("Did last week's predictions come true?", "గత వారం అంచనాలు నిజమయ్యాయా?"), _weekly_body(weekly)) if wk_body else "",
         _dialog("incidents", "list", "Incidents", "Deduplicated, highest severity first. Filters are saved in the page link.", incidents_body),
         _dialog("trends", "pulse", "Trends and 7-day outlook", "Incidents per day and what to expect next week", trends_body) if outlook else "",
         _dialog("watch", "target", "Predictions", "What is likely next week, why, and where", watch_body) if outlook else "",
@@ -852,7 +929,7 @@ Not specific crimes, people or places.</p>
 {banner}
 <div class="offline" id="offline" hidden>{icon("offline", 18)}<span>You are offline. Showing data saved at {local(now):%d %b, %H:%M} IST.</span></div>
 <main><div class="tiles">
-{t_trends}{t_inc}{t_vizag}{t_watch}{t_dist}{t_areas}{t_week}{t_scams}
+{t_trends}{t_inc}{t_vizag}{t_watch}{t_score}{t_dist}{t_areas}{t_week}{t_scams}
 </div></main>
 {dialogs}
 <footer>Compiled automatically from public news. Unverified: corroborate before acting. Severity is a keyword-based estimate. News headlines are shown as published.

@@ -220,3 +220,32 @@ class TeluguTests(unittest.TestCase):
         self.assertEqual(p["headline"], "Visakhapatnamలో సైబర్ మోసం")
         self.assertIn("డిజిటల్ అరెస్ట్", p["insight"])
         self.assertIn("Gajuwaka", p["where"])
+
+
+class WeeklyTests(unittest.TestCase):
+    def test_weekly_scorecard(self):
+        import tempfile, os
+        from datetime import timezone as tz, date
+        from osint_monitor.store import Store
+        from osint_monitor.weekly import build, markdown
+        path = os.path.join(tempfile.mkdtemp(), "t.db")
+        st = Store(path)
+        now = datetime(2026, 12, 2, 3, 0, tzinfo=tz.utc)
+        # 3 Vizag cyber cases inside the 25 Nov - 1 Dec week, 1 in the week before
+        its = [classify(item(f"Gajuwaka man loses Rs {k + 4} lakh in digital arrest scam", h, now=now))
+               for k, h in enumerate((30, 80, 130, 200))]
+        st.upsert(its)
+        st.conn.execute("UPDATE items SET first_seen = '2026-11-20T00:00:00+00:00'")
+        st.conn.commit()
+        st.log_predictions(date(2026, 11, 24), [
+            {"category": "Cyber fraud", "district": "Visakhapatnam", "expected": 2.5, "low": 1, "high": 5, "evidence": "Moderate"},
+            {"category": "Road accidents", "district": "Visakhapatnam", "expected": 1.0, "low": 0, "high": 3, "evidence": "Limited"}])
+        rep = build(path, now=now)
+        self.assertEqual(rep["made_on"], "2026-11-24")
+        rows = {r["category"]: r for r in rep["city_rows"]}
+        self.assertEqual(rows["Cyber fraud"]["actual"], 3)
+        self.assertEqual(rows["Cyber fraud"]["naive"], 1)
+        self.assertEqual(rows["Cyber fraud"]["verdict"], "inside")
+        self.assertTrue(rows["Road accidents"]["trivial"])
+        self.assertEqual(rep["city_summary"]["inside"], 2)
+        self.assertIn("2 of 2", markdown(rep))
